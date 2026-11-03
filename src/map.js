@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MapControls } from 'three/addons/controls/MapControls.js';
-import { clamp, drones, fmt, landmarks, pathNodes, resources, resourceStatusLabels } from './data.js';
+import { clamp, drones, fmt, landmarks, resources, resourceStatusLabels } from './data.js';
 import { resourceStatus, state, telemetry } from './state.js';
 import { dropById, dropProgress, lineProgress, resourceActive } from './operations.js';
 import { createFlames, dropFallTime } from './effects.js';
-import { createTerrain, groundInfo, height, lakeEdge, lakeLevel } from './terrain.js';
+import { missionTarget } from './missions.js';
+import { createTerrain, groundInfo, height, lakeEdge, lakeLevel, pathNodes } from './terrain.js';
 import { villages } from './roads.js';
 import { createEntities, createFireGraphics, createInfrastructure, createTracks, createVegetation, createWind, place } from './objects.js';
 
@@ -227,16 +228,12 @@ export function setupMap(host, callbacks) {
   function syncLabels(camera, isPlan, lift) {
     const picture = state.feed === 'pip' ? viewfinder.getBoundingClientRect() : null;
     const bounds = picture ? host.getBoundingClientRect() : null;
-    const res = state.workspace === 'Resources';
     for (const item of labelList) {
       const { element, cls, at, obj } = item;
       let visible = state.feed !== 'full';
-      const [x, z] = at;
-      let p = { x, z, y: (lakeEdge(x, z) < 0 ? lakeLevel : height(x, z)) + .75 };
+      let p;
       if (obj) {
         visible &&= showUnit(obj) && (isPlan || state.camera !== 'cockpit' || state.selected !== obj);
-        visible &&= res || obj.kind === 'drone' || obj.id.startsWith('R-') || resourceStatus(obj) === 'dropping'
-          || resourceStatus(obj) === 'enroute';
         const model = entities.get(obj.id);
         p = { x: model.position.x, y: model.position.y + (isPlan ? .6 : 1.5), z: model.position.z };
         if (visible) {
@@ -247,9 +244,13 @@ export function setupMap(host, callbacks) {
           element.classList.toggle('crew', obj.kind === 'crew');
           element.lastElementChild.textContent = obj.kind === 'drone' ? `${fmt.format(telemetry(obj).alt)} 英尺` : resourceStatusLabels[resourceStatus(obj)];
         }
-      } else if (cls.includes('spread-point')) {
-        visible &&= state.layers.spread.on && state.hour >= pathNodes.find((node) => node.at === at).time;
-      } else if (cls === 'resource-place') visible &&= res;
+      } else {
+        const [x, z] = at;
+        p = { x, z, y: (lakeEdge(x, z) < 0 ? lakeLevel : height(x, z)) + .75 };
+        if (cls.includes('spread-point')) {
+          visible &&= state.layers.spread.on && state.hour >= pathNodes.find((node) => node.at === at).time;
+        } else if (cls === 'resource-place') visible &&= state.workspace === 'Resources';
+      }
       const pixel = visible ? projection(p.x, p.y * lift, p.z, camera) : null;
       const behindFeed = picture && pixel && pixel.y < picture.bottom - bounds.top + 30
         && pixel.x > picture.left - bounds.left - 96;
@@ -400,7 +401,12 @@ export function setupMap(host, callbacks) {
     }
     for (const line of fire.route.children) line.visible = line.userData.time <= state.hour;
     for (const arrow of fire.arrows.children) arrow.visible = arrow.userData.time <= state.hour;
-    for (const track of tracks.children) track.material.opacity = !state.selected || state.selected.id === track.userData.id ? .71 : .16;
+    const trailEnd = Math.floor(state.hour * 8);
+    for (const track of tracks.children) {
+      const start = Math.max(0, trailEnd - 64);
+      track.geometry.setDrawRange(start, trailEnd - start + 1);
+      track.material.opacity = !state.selected || state.selected.id === track.userData.id ? .71 : .16;
+    }
     const following = state.selected && state.camera !== 'overview';
     orbit.enabled = !isPlan && !following && state.feed !== 'full';
     pan.enabled = isPlan && state.feed !== 'full';
@@ -469,8 +475,7 @@ export function setupMap(host, callbacks) {
       if (frame.width > 1 && frame.height > 1) {
         const unit = state.selected;
         const { position } = entities.get(unit.id);
-        const nadir = unit.index === 4;
-        const [x, z] = nadir ? [position.x, position.z - .12] : unit.target;
+        const { x, z } = missionTarget(unit, state.hour);
         sensor.position.set(position.x, position.y * lift, position.z);
         sensor.lookAt(x, height(x, z) * lift, z);
         sensor.aspect = frame.width / frame.height;

@@ -1,4 +1,5 @@
-import { containment, detections, events, hours, initialTime, layers } from './data.js';
+import { detections, drones, events, hours, initialTime, layers } from './data.js';
+import { dronePose, missionTarget, missionTemperature } from './missions.js';
 import { defenses, deployments, dismountHours, dropById, dropProgress, replayRate, resourceActive, toReplaySeconds } from './operations.js';
 
 export const state = {
@@ -37,10 +38,9 @@ export function loadRemaining(unit) {
 export function telemetry(drone, seconds = state.seconds) {
   const t = seconds * .31 + drone.index * 1.7;
   const missionSeconds = Math.max(0, seconds - toReplaySeconds(events[0].time));
-  const heading = (drone.heading + Math.round(Math.sin(t * .55) * 28) + 360) % 360;
-  const temperature = [963, 983, 655, 42, 191, 326][drone.index];
   const hour = seconds * replayRate;
-  const fire = hour >= events[0].time && hour < containment;
+  const { yaw } = dronePose(drone, hour);
+  const heading = (Math.round(-yaw * 180 / Math.PI) + 360) % 360;
   return {
     alt: Math.round((drone.alt + Math.sin(t) * 95) / 10) * 10,
     speed: Math.round(drone.speed + Math.sin(t * .68) * 2),
@@ -48,12 +48,15 @@ export function telemetry(drone, seconds = state.seconds) {
     battery: Math.max(5, drone.battery - Math.floor(missionSeconds / 37)),
     link: drone.link + Math.round(Math.sin(t * 1.13) * 2),
     flight: drone.flight === null ? null : drone.flight + Math.floor(missionSeconds),
-    temp: fire ? Math.max(26, Math.round(temperature + Math.sin(t * .91) * 12)) : 32,
+    temp: missionTemperature(drone, hour),
   };
 }
 
 export function currentDetections() {
-  return detections.filter(({ hour }) => state.hour >= hour).reverse();
+  return detections.filter(({ hour }) => state.hour >= hour).map((item) => {
+    const { x, z } = missionTarget(drones.find(({ id }) => id === item.id), item.hour);
+    return { ...item, at: [x, z] };
+  }).reverse();
 }
 
 export function tick(dt) {

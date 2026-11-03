@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { clamp, containment, events, pathNodes } from './data.js';
-import { pavedRoads } from './roads.js';
+import { clamp, clock, containment, events, firePath, sampleSeries } from './data.js';
+import { pavedRoads, villages } from './roads.js';
 
 export const mix = (a, b, t) => a + (b - a) * t;
 export const smooth = (lo, hi, n) => {
@@ -43,7 +43,7 @@ function lineDistance(x, z, samples) {
 
 export const lakeLevel = 4.8;
 export function lakeEdge(x, z) {
-  if (z > -54 || x < -56 || x > 49 || z < -182) return 40;
+  if (z > -43 || x < -69 || x > 62 || z < -196) return 40;
   return lineDistance(x, z, lakeSamples) - (5.9 + 6 * noise(x * .105, z * .093) + 2 * Math.sin(z * .19));
 }
 
@@ -76,6 +76,26 @@ function rawHeight(x, z) {
 const size = 370, depth = 343, segments = 360, depthCenter = -52;
 let heightGrid;
 
+function naturalSurface(x, z, water = lakeEdge(x, z)) {
+  const natural = rawHeight(x, z);
+  if (water >= 12) return natural;
+  const bank = lakeLevel + water * .55;
+  return mix(bank, natural, smooth(0, 12, water));
+}
+
+const villageBenches = villages.map(({ at: [x, z] }) => ({
+  x, z, height: naturalSurface(x, z) - .22,
+}));
+
+function villageTerrain(x, z, water = lakeEdge(x, z)) {
+  const natural = naturalSurface(x, z, water);
+  for (const bench of villageBenches) {
+    const distance = Math.hypot(x - bench.x, z - bench.z);
+    if (distance < 12) return mix(natural, bench.height, (1 - smooth(6.2, 12, distance)) * smooth(1, 3, water));
+  }
+  return natural;
+}
+
 const roadSampleGrid = new Map();
 const roadGridSize = 4;
 for (const { curve, width } of pavedRoads) {
@@ -83,7 +103,7 @@ for (const { curve, width } of pavedRoads) {
   points.forEach((point, i) => {
     // Average the road grade along the route before blending it into the terrain.
     const a = points[Math.max(0, i - 4)], b = points[Math.min(points.length - 1, i + 4)];
-    const grade = (rawHeight(a.x, a.y) + rawHeight(point.x, point.y) * 2 + rawHeight(b.x, b.y)) / 4 - .32;
+    const grade = (villageTerrain(a.x, a.y) + villageTerrain(point.x, point.y) * 2 + villageTerrain(b.x, b.y)) / 4 - .32;
     const col = Math.floor(point.x / roadGridSize), row = Math.floor(point.y / roadGridSize);
     const sample = { point, grade, width };
     for (let dx = -1; dx <= 1; dx++) {
@@ -114,11 +134,7 @@ export function nearPavedRoad(x, z) {
 
 function rawSurface(x, z) {
   const water = lakeEdge(x, z);
-  let y = rawHeight(x, z);
-  if (water < 12) {
-    const bank = lakeLevel + water * .55;
-    y = mix(bank, y, smooth(0, 12, water));
-  }
+  let y = villageTerrain(x, z, water);
   const road = nearestRoad(x, z);
   if (road && water > 1) {
     const shoulder = road.width / 2 + .32;
@@ -145,17 +161,31 @@ export function forest(x, z) {
   return clamp(.66 * noise(x * .055 + 38, z * .058) + .22 * noise(x * .21, z * .21 + 51) + .12 * noise(x * .5 - 10, z * .46));
 }
 
+// Advance the same burn field through alternating faster and slower periods.
+const fireTravelHours = [[0, 0], [6, 5], [14, 15], [24, 25], [34, 45], [43, 63], [52, 79], [59, 89], [69, 92.7]];
+
 export function fireAt(x, z) {
-  const origin = pathNodes[0].at;
-  const along = (x - origin[0]) * .54 - (z - origin[1]) * .842;
-  const across = (x - origin[0]) * .842 + (z - origin[1]) * .54;
+  const [ox, oz] = firePath[0];
+  const along = (x - ox) * .54 - (z - oz) * .842;
+  const across = (x - ox) * .842 + (z - oz) * .54;
   const rough = noise(x * .17, z * .19) * 3.9 + noise(x * .061 + 9, z * .064) * 7 - 5.5;
   const width = 9 + 10 * Math.sin(clamp((along + 9) / 88) * Math.PI) + 4 * Math.sin(along * .076);
   const edge = Math.max(Math.abs(across - 3.9 * Math.sin(along * .08)) - width, -along - 10, along - 83) + rough;
-  const arrival = Math.max(events[0].time, .43 + Math.max(0, along) * .249 + (Math.abs(across) / Math.max(width, 3)) ** 2 * (8 + .42 * Math.max(0, along)) + noise(x * .1, z * .1) * 4 - 2.2);
+  const forward = Math.max(0, along);
+  const localVariation = (noise(x * .1, z * .1) - .4) * 4 * smooth(0, 9, Math.hypot(along, across));
+  const distance = forward * .53 + Math.max(0, -along) * 1.08
+    + (Math.abs(across) / width) ** 1.55 * (8 + .17 * forward) + localVariation;
   const spot = Math.hypot((x - 18) * .91, z - 8);
-  return { edge, arrival, spot };
+  const traveled = events[0].time + sampleSeries(fireTravelHours, Math.max(0, distance));
+  const spotArrival = events[2].time + spot * 2.4;
+  const arrival = spot < 4 ? mix(Math.min(traveled, spotArrival), traveled, smooth(1.3, 4, spot)) : traveled;
+  return { edge, arrival, spot, along, across };
 }
+
+export const pathNodes = firePath.map((at, index) => {
+  const time = fireAt(...at).arrival;
+  return { name: index ? clock(time) : '起火', note: index ? '' : clock(time), time, at };
+});
 
 export function groundInfo(x, z, hour) {
   const y = height(x, z);
@@ -172,11 +202,11 @@ export function groundInfo(x, z, hour) {
 
 export const fireIntensityGLSL = `
   float fireIntensity(float hour,float edge,float arrival,float spotDistance){
-    float burning=(1.0-smoothstep(85.0,${containment.toFixed(4)},hour))*step(${events[0].time.toFixed(4)},hour);
+    float burning=(1.0-smoothstep(89.0,${containment.toFixed(4)},hour))*step(${events[0].time.toFixed(4)},hour);
     float age=hour-arrival;
-    float front=exp(-abs(age)*.85)*(1.0-smoothstep(-.3,.85,edge));
-    float perimeter=exp(-abs(edge)*1.26)*smoothstep(-.7,.65,age)*mix(.72,.32,smoothstep(5.0,49.0,age));
-    float spot=exp(-spotDistance*spotDistance*.95)*smoothstep(11.5,13.2,hour)*(1.0-smoothstep(16.0,23.0,hour));
+    float front=exp(-abs(age)*.67)*(1.0-smoothstep(-.3,.85,edge));
+    float perimeter=exp(-abs(edge)*1.26)*smoothstep(-.7,.65,age)*mix(.66,.09,smoothstep(4.0,30.0,age));
+    float spot=exp(-spotDistance*spotDistance*.95)*smoothstep(13.2,14.0,hour)*(1.0-smoothstep(16.0,23.0,hour));
     return max(front,perimeter)*burning+spot;
   }
 `;

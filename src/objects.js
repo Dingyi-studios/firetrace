@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { clamp, drones, resources, pathNodes } from './data.js';
-import { airDrops, defenses, deployments, dismountHours, lineProgress, progressAt, replayRate, toReplaySeconds } from './operations.js';
+import { clamp, drones, resources, hours } from './data.js';
+import { airDrops, defenses, deployments, dismountHours, lineProgress, progressAt, toReplaySeconds } from './operations.js';
 import { createDropParticles } from './effects.js';
-import { fireAt, flatPath, forest, height, lakeEdge, nearPavedRoad, noise, random, ribbon } from './terrain.js';
+import { fireAt, flatPath, forest, height, lakeEdge, nearPavedRoad, noise, pathNodes, random, ribbon } from './terrain.js';
+import { dronePose } from './missions.js';
 import { oakRoad, pavedRoads, roadCurve, roadPath, roadPoint, villages } from './roads.js';
 
 const mat = (color) => new THREE.MeshLambertMaterial({ color, flatShading: true });
@@ -156,10 +157,8 @@ function positionOn(curve, progress, lift) {
 
 function aircraftPose(unit, hour) {
   const [cx, cz] = unit.at;
-  const drone = unit.kind === 'drone';
-  const phase = toReplaySeconds(hour) * (drone ? .085 : .039) + unit.index * 2.17;
-  const rx = drone ? 4 + unit.index * .85 : 22;
-  const rz = drone ? 3.5 + unit.index * .32 : 18;
+  const phase = toReplaySeconds(hour) * .039 + unit.index * 2.17;
+  const rx = 22, rz = 18;
   const x = cx + Math.sin(phase) * rx;
   const z = cz + Math.cos(phase) * rz;
   return { x, z, y: height(x, z) + 2.4 + unit.alt / 275, yaw: Math.atan2(-Math.cos(phase) * rx, Math.sin(phase) * rz) };
@@ -172,7 +171,8 @@ function interpolatePose(a, b, t) {
 }
 
 export function place(unit, hour) {
-  if (unit.kind === 'drone' || unit.kind === 'air') {
+  if (unit.kind === 'drone') return dronePose(unit, hour);
+  if (unit.kind === 'air') {
     const drop = airDrops.find(({ id }) => id === unit.id);
     const orbit = aircraftPose(unit, hour);
     if (!drop || hour < drop.start - 4 || hour > drop.finish + 4) return orbit;
@@ -299,7 +299,8 @@ export function createInfrastructure(world) {
     for (let i = 0; i < houses; i++) {
       const side = i % 2 ? -1 : 1;
       const row = Math.floor(i / 2);
-      const along = t + (row - 2.5) * .014;
+      const routeScale = curve.getPoint(t - .005).distanceTo(curve.getPoint(t + .005)) / .01;
+      const along = t + (row - (Math.ceil(houses / 2) - 1) / 2) * 1.42 / routeScale;
       const point = roadPoint(curve, along, side * (2.3 + rng() * 1.4));
       const x = point.x, z = point.y;
       const y = height(x, z), tangent = curve.getTangent(along);
@@ -355,7 +356,7 @@ export function createFireGraphics(world) {
     const samples = flatPath(points, 80);
     const line = i % 2 ? mergeRibbons([[Array.from({ length: 10 }, (_, j) => samples.slice(j * 8, j * 8 + 5)), .20, '#f9cf66', 1, .40]])
       : ribbon(samples, .20, '#f9cf66', 1, .40);
-    line.userData.time = pathNodes[i].time;
+    line.userData.time = pathNodes[i + 1].time;
     route.add(line);
   });
   const arrows = new THREE.Group();
@@ -366,7 +367,7 @@ export function createFireGraphics(world) {
   ]) {
     const samples = flatPath(points, 50);
     const arrow = new THREE.Group();
-    arrow.userData.time = time;
+    arrow.userData.time = Math.max(time, fireAt(...points.at(-1)).arrival);
     arrow.add(ribbon(samples, .36, '#f37c42', 1, .38));
     for (const idx of [22, 42]) {
       const a = samples[idx], b = samples[idx + 1];
@@ -489,8 +490,8 @@ export function createVegetation(world, uniforms) {
 export function createTracks(world) {
   const group = new THREE.Group();
   for (const unit of drones) {
-    const points = Array.from({ length: 101 }, (_, i) => {
-      const p = aircraftPose(unit, i / 100 * Math.PI * 2 / .085 * replayRate);
+    const points = Array.from({ length: hours * 8 + 1 }, (_, i) => {
+      const p = place(unit, i / 8);
       return new THREE.Vector3(p.x, p.y, p.z);
     });
     const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color: '#fff9ec', transparent: true, opacity: .56, depthWrite: false }));

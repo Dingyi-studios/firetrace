@@ -22,9 +22,9 @@ export const defenses = [
 ];
 
 export const airDrops = [
-  { id: 'H-743', substance: 'water', start: 27.5, finish: 31.5, path: [[-5, -16], [0, -19], [7, -23], [13, -27]], width: 1.75, altitude: 5.4 },
+  { id: 'H-743', substance: 'water', start: 27.5, finish: 31.5, path: [[10, -10], [13, -8], [16, -5], [18, -1]], width: 1.75, altitude: 5.4 },
   { id: 'T-131', substance: 'retardant', start: 36, finish: 42, path: [[-5, 3], [1, 0], [9, -5], [16, -10], [24, -13]], width: 2.3, altitude: 8.6 },
-  { id: 'H-531', substance: 'water', start: 49, finish: 53, path: [[22, -29], [25, -33], [29, -38], [33, -42]], width: 1.4, altitude: 5.1 },
+  { id: 'H-531', substance: 'water', start: 49, finish: 53, path: [[18, -18], [20, -21], [23, -24], [24, -25]], width: 1.4, altitude: 5.1 },
 ].map((drop) => ({ ...drop, quantity: resources.find((unit) => unit.id === drop.id).capacity }));
 
 export const dropById = new Map(airDrops.map((drop) => [drop.id, drop]));
@@ -38,12 +38,14 @@ export const retardantTotal = (hour) => Math.round(sampleSeries(dropped, hour / 
 export const waterTotal = (hour) => airDrops.reduce((sum, drop) =>
   sum + (drop.substance === 'water' ? Math.round(drop.quantity * dropProgress(drop, hour)) : 0), 0);
 
+const unitDispatch = { 'AA-52': 10, 'WT-12': 15, 'T-910': 17, 'H-743': 21, 'T-131': 29, 'H-531': 39, 'T-162': 47 };
+
 export function resourceActive(unit, hour) {
   const deployment = deployments.find(({ truck, crew }) => truck === unit.id || crew === unit.id);
   if (deployment) return hour >= (deployment.truck === unit.id ? deployment.entry : deployment.arrival);
   const firstLine = defenses.find(({ id }) => id === unit.id);
   if (firstLine) return hour >= firstLine.start - 3;
-  return hour >= (unit.kind === 'air' ? 2.5 : 8);
+  return hour >= (unitDispatch[unit.id] ?? Infinity);
 }
 
 export function onboard(unit, hour) {
@@ -59,5 +61,5 @@ export function personnelTotal(hour) {
 }
 
 export const defenseTimeline = [0, ...defenses.flatMap(({ start, finish }) => [start, finish]), hours].sort((a, b) => a - b);
-export const personnelTimeline = [...new Set([0, 2.5, 8, ...defenses.map(({ start }) => start - 3), ...deployments.flatMap(({ entry, arrival }) => [entry, arrival]), hours])].sort((a, b) => a - b);
+export const personnelTimeline = [...new Set([0, ...Object.values(unitDispatch), ...defenses.map(({ start }) => start - 3), ...deployments.flatMap(({ entry, arrival }) => [entry, arrival]), hours])].sort((a, b) => a - b);
 export const retardantTimeline = [...new Set([...dropped.map(([p]) => p * hours), ...airDrops.filter(({ substance }) => substance === 'retardant').flatMap(({ start, finish }) => [start, finish])])].sort((a, b) => a - b);

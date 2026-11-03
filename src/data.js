@@ -26,7 +26,7 @@ export const events = [
   { name: '起火（估计）', time: 26 / 60, icon: '●', color: '#a83127', at: [-13, 26] },
   { name: '火势迅速扩大', time: 2 + 50 / 60, icon: '♨', color: '#cb552e', at: [-4, 16] },
   { name: '疑似飞火', time: 13.2, icon: '▲', color: '#ab7445', at: [18, 8] },
-  { name: '火势越过山脊', time: 27.8, icon: '⧗', color: '#696b5d', at: [30, -31] },
+  { name: '火势越过山脊', time: 50, icon: '⧗', color: '#696b5d', at: [23, -23] },
   { name: '火势受控（估计）', time: containment, icon: '■', color: '#6e8790', at: [36, -47] },
 ];
 
@@ -37,13 +37,7 @@ export const landmarks = [
   { name: '峡谷溪', note: '', at: [-44, 6] },
   { name: '橡树坪', note: '1,120 米', at: [54, 27], peak: true },
 ];
-export const pathNodes = [
-  { name: '起火', note: clock(events[0].time), time: events[0].time, at: events[0].at },
-  { name: clock(4), time: 4, at: [5, 9] },
-  { name: clock(10), time: 10, at: [14, -7] },
-  { name: clock(16), time: 16, at: [23, -23] },
-  { name: clock(22), time: 22, at: [29, -36] },
-];
+export const firePath = [[-13, 26], [5, 9], [14, -7], [23, -23], [29, -36]];
 export const layers = [
   ['terrain', '三维地形', true, 100],
   ['aerial', '航空影像', true, 100],
@@ -57,13 +51,15 @@ export const layers = [
   ['boundary', '行政边界', false],
 ].map(([id, name, on, opacity]) => ({ id, name, on, opacity }));
 
+export const totalAcres = 12480;
+
 export const overview = [
   ['事件名称', incidentName],
   ['事件编号', 'CA-LAC-2024-0176'],
   ['地点', incidentLocation],
   ['起火时间（估计）', `2024年${clock(events[0].time)}`],
   ['结束时间', `2024年${clock(containment)}`],
-  ['过火面积', '12,480 英亩'],
+  ['过火面积', `${fmt.format(totalAcres)} 英亩`],
   ['初步起因', '调查中'],
   ['分析状态', '进行中', true],
 ];
@@ -71,14 +67,14 @@ export const overview = [
 const airframeLabels = { vtol: '垂直起降固定翼', heavy: '重载四旋翼', quad: '四旋翼', wing: '固定翼' };
 
 export const drones = [
-  ['FT-01', '红隼', 'vtol', '火场边界测绘', '测绘中', '沿当前火线飞行，每圈更新火场边界', '可见光／红外 · 30 倍变焦', 2080, 56, 63, 77, -73, 3004, [7, -2], [12, -7], -68, 42],
-  ['FT-02', '鹞鹰', 'heavy', '火头监视', '盘旋 · 活跃火线', '在火头最活跃的区域上空盘旋', '测温红外', 700, 22, 245, 73, -72, 1411, [21, -17], [15, -10], -45, 48],
-  ['FT-03', '雨燕', 'quad', '侧翼及飞火监视', '盘旋 · 飞火点', '监视火场侧翼，并在下一处活跃飞火点上空盘旋', '可见光／红外', 640, 18, 145, 77, -72, 1173, [28, 3], [18, 8], -50, 47],
-  ['FT-04', '鱼鹰', 'quad', '建筑防护', '巡逻中', '巡查橡树坪和东岔溪一带的建筑', '可见光／红外 · 探照灯', 1260, 20, 211, 83, -68, 2495, [48, 19], [54, 27], -37, 50],
-  ['FT-05', '秃鹰', 'wing', '热点巡查', '巡查中', '沿平行航线扫描烧毁区域', '垂直向下红外测绘', 1860, 46, 39, 69, -65, 1497, [-4, 1], [-3, 4], -88, 49],
-  ['FT-06', '鹪鹩', 'quad', '通信中继', '中继中', '为峡谷溪作业队提供通信中继', '可见光 · 无线自组网', 790, 65, 95, 69, -63, null, [-35, 23], [-12, 12], -29, 52],
-].map(([id, name, airframe, mission, status, task, sensor, alt, speed, heading, battery, link, flight, at, target, pitch, fov], index) =>
-  ({ id, name, type: airframeLabels[airframe], fixedWing: airframe === 'vtol' || airframe === 'wing', mission, status, task, sensor, alt, speed, heading, battery, link, flight, at, target, pitch, fov, index, kind: 'drone' }));
+  ['FT-01', '红隼', 'vtol', '火线全景测绘', 'overview', '可见光／红外 · 30 倍变焦', 2080, 56, 77, -73, 3004, 42],
+  ['FT-02', '鹞鹰', 'heavy', '火头监视', 'head', '测温红外', 700, 22, 73, -72, 1411, 48],
+  ['FT-03', '雨燕', 'quad', '火场侧翼监视', 'flank', '可见光／红外', 640, 18, 77, -72, 1173, 47],
+  ['FT-04', '鱼鹰', 'quad', '村落轮巡', 'village', '可见光／红外 · 探照灯', 1260, 20, 83, -68, 2495, 50],
+  ['FT-05', '秃鹰', 'wing', '热成像火线测绘', 'thermal', '红外测绘', 1860, 46, 69, -65, 1497, 49],
+  ['FT-06', '鹪鹩', 'quad', '村落轮巡', 'village', '可见光 · 无线自组网', 790, 65, 69, -63, null, 52],
+].map(([id, name, airframe, mission, role, sensor, alt, speed, battery, link, flight, fov], index) =>
+  ({ id, name, type: airframeLabels[airframe], fixedWing: airframe === 'vtol' || airframe === 'wing', mission, role, sensor, alt, speed, battery, link, flight, fov, index, kind: 'drone' }));
 
 export const resources = [
   ['T-910', 'DC-10 超大型灭火飞机', 'air', 'inbound', '加州林业与消防局（专用）', '进入投放航线 · 引导机领航', 300, 1640, 160, 9400, 0, '', [6, -67]],
@@ -101,10 +97,10 @@ export const resources = [
   ({ id, name, kind, status, agency, task, speed, alt, heading, capacity, personnel, division, at, index }));
 
 export const detections = [
-  { id: 'FT-01', temp: 963, at: [11, -4], hour: 7 },
-  { id: 'FT-02', temp: 983, at: [15, -10], hour: 12 },
-  { id: 'FT-01', temp: 980, at: [13, -4], hour: 19 },
-  { id: 'FT-01', temp: 655, at: [18, 8], hour: 30 },
+  { id: 'FT-01', temp: 963, hour: 7 },
+  { id: 'FT-02', temp: 983, hour: 12 },
+  { id: 'FT-01', temp: 980, hour: 19 },
+  { id: 'FT-01', temp: 655, hour: 30 },
 ];
 
 export function sampleSeries(points, x) {
@@ -116,16 +112,17 @@ export function sampleSeries(points, x) {
   return a + (b - a) * ((x - left) / (right - left));
 }
 
-export const area = [[0, 0], [.05, 180], [.11, 2350], [.19, 4200], [.27, 7020], [.37, 8250], [.48, 8650], [.64, 10800], [.77, 11500], [.88, 12300], [1, 12480]];
-export const spread = [[0, 0], [.07, 0], [.077, 32], [.1, 28], [.14, 12], [.19, 7], [.23, 8], [.29, 34], [.32, 23], [.36, 12], [.41, 6], [.46, 9], [.53, 31], [.58, 10], [.65, 6], [.7, 7], [.75, 26], [.77, 18], [.785, 23], [.81, 12], [.87, 5], [.91, 8], [.95, 4], [1, 0]];
 export const profile = [[0, 1140], [.05, 1220], [.09, 1110], [.13, 1180], [.18, 1070], [.23, 1270], [.27, 1190], [.32, 1410], [.36, 1370], [.42, 1570], [.46, 1770], [.51, 1660], [.57, 1630], [.62, 1540], [.66, 1720], [.71, 1740], [.76, 1800], [.8, 1750], [.85, 1870], [.9, 1820], [.95, 1950], [1, 2070]];
 export const dropped = [[0, 0], [.12, 0], [.16, 38000], [.29, 45000], [.37, 98000], [.48, 123000], [.53, 144000], [.6, 145000], [.64, 210000], [.7, 222000], [.73, 219000], [.81, 271000], [.85, 304000], [1, 312000]];
 
 export const compass = (degrees) => ['北', '北东北', '东北', '东东北', '东', '东东南', '东南', '南东南', '南', '南西南', '西南', '西西南', '西', '西西北', '西北', '北西北'][Math.round(degrees / 22.5) % 16];
+function degreesAndMinutes(degrees, minutes) {
+  const hundredths = Math.round((degrees * 60 + minutes) * 100);
+  return `${Math.floor(hundredths / 6000)}°${((hundredths % 6000) / 100).toFixed(2)}′`;
+}
+
 export function coordinates(x, z) {
-  const lat = 19 - z * .060;
-  const lon = 56.7 - x * .068;
-  return `北纬 34°${lat.toFixed(2)}′ · 西经 117°${lon.toFixed(2)}′`;
+  return `北纬 ${degreesAndMinutes(34, 19 - z * .060)} · 西经 ${degreesAndMinutes(117, 56.7 - x * .068)}`;
 }
 
 export function weather(hour, ground = null) {

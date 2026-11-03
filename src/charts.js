@@ -1,4 +1,5 @@
-import { area, fmt, hours, profile, sampleSeries, spread } from './data.js';
+import { fmt, hours, profile, sampleSeries } from './data.js';
+import { area, spread } from './fire-activity.js';
 import { state, telemetry } from './state.js';
 import { completedLine, defenseTimeline, personnelTimeline, personnelTotal, retardantTimeline, retardantTotal } from './operations.js';
 import { icon } from './icons.js';
@@ -48,8 +49,8 @@ export function renderCharts(drones) {
   let list;
   if (state.workspace === 'Incident') {
     list = [
-      { title: '过火面积（英亩）', points: area, max: 15000, color: '#b36d4c', fill: '#cc8159' },
-      { title: '蔓延速度（链/时）', points: spread, max: 40, color: '#ad4e41', fill: '#bb7767' },
+      { title: '过火面积（英亩）', points: area, max: 15000, value: `${fmt.format(Math.round(sampleSeries(area, state.hour / hours)))} 英亩`, color: '#b36d4c', fill: '#cc8159' },
+      { title: '等效蔓延速度（链/时）', points: spread, max: 12, color: '#ad4e41', fill: '#bb7767' },
       { title: '所选路径高程剖面', points: profile, max: 2100, min: 900, color: '#555945', fill: '#707d50', ticks: ['0', '5', '10', '15 千米'] },
     ];
   } else if (state.workspace === 'Resources') {
