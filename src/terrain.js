@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { clamp, clock, containment, events, firePath, sampleSeries } from './data.js';
 import { pavedRoads, villages } from './roads.js';
+import { combustionGLSL, denseFuel } from './combustion.js';
 
 export const mix = (a, b, t) => a + (b - a) * t;
 export const smooth = (lo, hi, n) => {
@@ -179,7 +180,11 @@ export function fireAt(x, z) {
   const traveled = events[0].time + sampleSeries(fireTravelHours, Math.max(0, distance));
   const spotArrival = events[2].time + spot * 2.4;
   const arrival = spot < 4 ? mix(Math.min(traveled, spotArrival), traveled, smooth(1.3, 4, spot)) : traveled;
-  return { edge, arrival, spot, along, across };
+  const nextBand = fireTravelHours.findIndex(([at]) => at >= Math.max(0, distance));
+  const band = nextBand < 0 ? fireTravelHours.length - 1 : Math.max(1, nextBand);
+  const a = fireTravelHours[band - 1], b = fireTravelHours[band];
+  const rate = clamp((b[0] - a[0]) / (b[1] - a[1]) * (.8 + .3 * noise(x * .09, z * .09)), .18, 1);
+  return { edge, arrival, spot, along, across, rate };
 }
 
 export const pathNodes = firePath.map((at, index) => {
@@ -200,16 +205,7 @@ export function groundInfo(x, z, hour) {
   };
 }
 
-export const fireIntensityGLSL = `
-  float fireIntensity(float hour,float edge,float arrival,float spotDistance){
-    float burning=(1.0-smoothstep(89.0,${containment.toFixed(4)},hour))*step(${events[0].time.toFixed(4)},hour);
-    float age=hour-arrival;
-    float front=exp(-abs(age)*.67)*(1.0-smoothstep(-.3,.85,edge));
-    float perimeter=exp(-abs(edge)*1.26)*smoothstep(-.7,.65,age)*mix(.66,.09,smoothstep(4.0,30.0,age));
-    float spot=exp(-spotDistance*spotDistance*.95)*smoothstep(13.2,14.0,hour)*(1.0-smoothstep(16.0,23.0,hour));
-    return max(front,perimeter)*burning+spot;
-  }
-`;
+export const fireIntensityGLSL = combustionGLSL;
 
 export function createTerrain(scene) {
   const uniforms = {
@@ -222,31 +218,36 @@ export function createTerrain(scene) {
   const pos = geometry.attributes.position;
   const signal = new Float32Array(pos.count * 4);
   const greens = new Float32Array(pos.count);
+  const fuels = new Float32Array(pos.count * 2);
   heightGrid = new Float32Array(pos.count);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
     const y = rawSurface(x, z);
     pos.setY(i, y);
     heightGrid[i] = y;
-    const { edge, arrival, spot } = fireAt(x, z);
+    const { edge, arrival, spot, rate } = fireAt(x, z);
     signal.set([edge, arrival, spot, lakeEdge(x, z)], i * 4);
     greens[i] = forest(x, z);
+    fuels.set([rate, denseFuel(x, z)], i * 2);
   }
   geometry.setAttribute('signal', new THREE.BufferAttribute(signal, 4));
   geometry.setAttribute('greens', new THREE.BufferAttribute(greens, 1));
+  geometry.setAttribute('heatFuel', new THREE.BufferAttribute(fuels, 2));
   geometry.computeVertexNormals();
   const material = new THREE.ShaderMaterial({
     uniforms,
     vertexShader: `
       attribute vec4 signal;
       attribute float greens;
+      attribute vec2 heatFuel;
+      varying vec2 vHeatFuel;
       varying vec4 vSignal;
       varying vec3 vWorld;
       varying vec3 vNormal;
       varying float vForest;
       varying float vDepth;
       void main(){
-        vSignal=signal; vWorld=position; vNormal=normal; vForest=greens;
+        vSignal=signal; vWorld=position; vNormal=normal; vForest=greens; vHeatFuel=heatFuel;
         vec4 mv=modelViewMatrix*vec4(position,1.0);
         vDepth=-mv.z;
         gl_Position=projectionMatrix*mv;
@@ -257,6 +258,7 @@ export function createTerrain(scene) {
       varying vec3 vWorld;
       varying vec3 vNormal;
       varying float vForest;
+      varying vec2 vHeatFuel;
       varying float vDepth;
       float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123); }
       float n(vec2 p) {
@@ -288,7 +290,7 @@ export function createTerrain(scene) {
         float burnt=(1.0-smoothstep(-.35,1.1,edge))*smoothstep(-.18,.2,delta);
         float probability=exp(-pow(length((p-vec2(-13.0,26.0))/vec2(8.0,7.0)),2.0)*1.5);
         probability+=.32*exp(-pow(length((p-vec2(18.0,8.0))/vec2(7.0,6.0)),2.0)*1.5)*step(8.0,uHour);
-        float intensity=fireIntensity(uHour,edge,vSignal.y,vSignal.z);
+        float intensity=fireIntensity(uHour,edge,vSignal.y,vSignal.z,vHeatFuel.x,vForest,vHeatFuel.y);
         float flicker=.79+.21*n(p*2.5+vec2(uClock*3.1,-uClock*1.7));
         float fire=clamp(intensity*flicker*(.9+.37*grain),0.0,1.0);
         float halo=smoothstep(.035,.34,fire);
@@ -319,7 +321,7 @@ export function createTerrain(scene) {
         }
         if(uThermal>.5){
           float warmth=(.085+.107*light+.065*grain-.067*greenery)*(1.0-water*.57);
-          warmth+=burnt*(.07+.11*rock)+fire*.90*uSpread;
+          warmth+=burnt*(.035+.04*rock)+clamp(intensity,0.0,1.0)*(.67+.10*grain)*uSpread;
           warmth=clamp(warmth,0.0,1.0);
           surface=uThermal>1.5?vec3(warmth):iron(warmth);
         }

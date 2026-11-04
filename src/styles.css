@@ -325,7 +325,8 @@ h1, h2, h3, p, dl, dd { margin: 0; }
 .crosshair { left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; place-items: center; width: 4.1rem; height: 4.1rem; }
 .crosshair i { position: absolute; width: 100%; height: 1px; background: linear-gradient(90deg, #fff9efb8 0 44%, transparent 44% 56%, #fff9efb8 56% 100%); box-shadow: 0 0 3px #222a; }
 .crosshair i + i { transform: rotate(90deg); }
-.hot-target { position: absolute; top: 36%; left: 56%; width: 3rem; height: 2.3rem; border: 1px dashed #9cfaffcc; color: #b5f8f9; }
+.hot-target { position: absolute; transform: translate(-50%, -50%); width: 3rem; height: 2.3rem; border: 1px dashed #9cfaffcc; color: #b5f8f9; }
+.hot-target.dense { width: 3.8rem; height: 3.1rem; border-color: #ffdf8e; color: #ffe9b5; }
 .hot-target b { position: absolute; top: -.98rem; left: 0; white-space: nowrap; font-size: .68rem; }
 #follow { position: absolute; z-index: 3; bottom: 1.11rem; left: 50%; transform: translateX(-50%); padding: .63rem .95rem .4rem; min-width: 29rem; max-width: calc(100% - 2rem); background: #25231ce9; color: #ede5d3; border: 1px solid #685d48; border-radius: .47rem; box-shadow: 0 .22rem .73rem #17130d78; }
 .follow-header { font-size: .88rem; }
@@ -403,3 +404,5 @@ h1, h2, h3, p, dl, dd { margin: 0; }
 }
 .village:hover { background: #56604b; }
 .deployment-mark { top: .93rem; }
+
+.hot-target.front b { top: auto; bottom: -1.1rem; }

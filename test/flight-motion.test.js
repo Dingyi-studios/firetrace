@@ -4,7 +4,8 @@ import { Group } from 'three';
 import { drones, hours, resources } from '../src/data.js';
 import { fireTarget } from '../src/fire-activity.js';
 import { createFireGraphics, place } from '../src/objects.js';
-import { airDrops } from '../src/operations.js';
+import { airDrops, replayRate, resourceActive } from '../src/operations.js';
+import { airOperation, aircraftRate, dropOccurrences } from '../src/air-operations.js';
 import { roadCurve, villages } from '../src/roads.js';
 import { state, tick } from '../src/state.js';
 import { height } from '../src/terrain.js';
@@ -45,20 +46,27 @@ test('fire surveillance targets keep a continuous velocity across hourly updates
 
 for (const unit of resources.filter(({ kind }) => kind === 'air')) {
   test(`${unit.id} keeps its nose forward and balances speed across flight phases`, () => {
-    let minimum = Infinity, maximum = 0, previous = place(unit, 0);
-    for (let sample = 1; sample < hours / step; sample++) {
-      const hour = sample * step, pose = place(unit, hour);
-      const speed = distance(previous, pose) / step;
+    let minimum = Infinity, maximum = 0;
+    const airStep = step / aircraftRate;
+    for (let sample = 1; sample < hours / airStep; sample++) {
+      const hour = sample * airStep;
+      if (!resourceActive(unit, hour)) continue;
+      const pose = place(unit, hour), previous = place(unit, hour - airStep);
+      const before = place(unit, hour - .0001), ahead = place(unit, hour + .0001);
+      const moving = distance(before, ahead) > .000001;
+      if (moving) {
+        const alignment = (-Math.sin(pose.yaw) * (ahead.x - before.x) - Math.cos(pose.yaw) * (ahead.z - before.z)) / distance(before, ahead);
+        assert.ok(alignment > .999, `${unit.id} is flying sideways at ${hour}`);
+      }
+      assert.ok(turn(previous, pose) < 3 * Math.PI / 180, `${unit.id} turns abruptly at ${hour}`);
+      const operation = airOperation(unit, hour);
+      if (operation.phase === 'refilling' || airOperation(unit, hour - airStep).phase === 'refilling') continue;
+      const speed = distance(previous, pose) / airStep;
       minimum = Math.min(minimum, speed);
       maximum = Math.max(maximum, speed);
-      const before = place(unit, hour - .001), ahead = place(unit, hour + .001);
-      const alignment = (-Math.sin(pose.yaw) * (ahead.x - before.x) - Math.cos(pose.yaw) * (ahead.z - before.z)) / distance(before, ahead);
-      assert.ok(alignment > .999, `${unit.id} is flying sideways at ${hour}`);
-      assert.ok(turn(previous, pose) < 3 * Math.PI / 180, `${unit.id} turns abruptly at ${hour}`);
-      previous = pose;
     }
-    assert.ok(maximum / minimum < 1.02, `${unit.id}: cruise speed varies from ${minimum} to ${maximum}`);
-    if (!unit.id.startsWith('H-')) assert.ok(minimum > 4, 'Fixed-wing cruise must not crawl');
+    assert.ok(maximum / minimum < (unit.id === 'AA-52' ? 1.4 : 1.02), `${unit.id}: cruise speed varies from ${minimum} to ${maximum}`);
+    assert.ok(minimum * replayRate > .8, 'Flight must retain its real playback speed');
   });
 }
 

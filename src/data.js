@@ -11,6 +11,7 @@ export const substanceLabels = { retardant: '阻燃剂', water: '水' };
 export const resourceStatusLabels = {
   inbound: '飞往火场', final: '进入投放航线', dropping: '投放中', reload: '返航补给',
   'to-drop': '待投放', supervising: '空中协调中', protecting: '建筑防护中',
+  'to-water': '前往取水点', 'taking-water': '取水中', reloading: '机场补给中', returning: '返航中',
   enroute: '增援途中', staged: '已抵达集结点', building: '开辟防火线', dismounting: '下车集结', deploying: '步行前往火线', standby: '待出动',
   patrol: '巡逻中', 'supply-e31': '前往支援 E-31', 'mop-up': '固守与清理余火',
 };
@@ -73,6 +74,9 @@ export const drones = [
   ['FT-04', '鱼鹰', 'quad', '村落轮巡', 'village', '可见光／红外 · 探照灯', 1260, 20, 83, -68, 2495, 50],
   ['FT-05', '秃鹰', 'wing', '热成像火线测绘', 'thermal', '红外测绘', 1860, 46, 69, -65, 1497, 49],
   ['FT-06', '鹪鹩', 'quad', '村落轮巡', 'village', '可见光 · 无线自组网', 790, 65, 69, -63, null, 52],
+  ['FT-07', '林隼', 'heavy', '西坡密林持续监视', 'forest-west', '测温红外 · 密林火点追踪', 1440, 25, 84, -68, 1600, 58],
+  ['FT-08', '山鹰', 'heavy', '北坡密林持续监视', 'forest-north', '测温红外 · 密林火点追踪', 1560, 25, 82, -69, 1700, 58],
+  ['FT-09', '苍穹', 'vtol', '高空火场全景监视', 'global', '广域可见光／红外', 9200, 110, 88, -70, 2100, 74],
 ].map(([id, name, airframe, mission, role, sensor, alt, speed, battery, link, flight, fov], index) =>
   ({ id, name, type: airframeLabels[airframe], fixedWing: airframe === 'vtol' || airframe === 'wing', mission, role, sensor, alt, speed, battery, link, flight, fov, index, kind: 'drone' }));
 

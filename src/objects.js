@@ -3,9 +3,11 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clamp, drones, resources, hours } from './data.js';
 import { airDrops, defenses, deployments, dismountHours, lineProgress, progressAt } from './operations.js';
 import { createDropParticles } from './effects.js';
-import { fireAt, flatPath, forest, height, lakeEdge, nearPavedRoad, noise, pathNodes, random, ribbon } from './terrain.js';
+import { fireAt, fireIntensityGLSL, flatPath, forest, height, lakeEdge, nearPavedRoad, noise, pathNodes, random, ribbon } from './terrain.js';
 import { dronePose } from './missions.js';
 import { aircraftPose } from './flight-paths.js';
+import { denseFuel } from './combustion.js';
+import { windLineCount } from './ambient.js';
 import { oakRoad, pavedRoads, roadCurve, roadPath, roadPoint, villages } from './roads.js';
 
 const mat = (color) => new THREE.MeshLambertMaterial({ color, flatShading: true });
@@ -357,8 +359,8 @@ export function createFireGraphics(world) {
 
 export function createWind(world) {
   const rng = random(8971);
-  const pts = [], phase = [], fade = [];
-  for (let i = 0; i < 200; i++) {
+  const pts = [], phase = [], fade = [], sides = [], indices = [];
+  for (let i = 0; i < windLineCount; i++) {
     const x0 = -86 + rng() * 145, z0 = -70 + rng() * 143;
     const len = 7 + rng() * 17, start = rng();
     const point = (t) => {
@@ -366,23 +368,30 @@ export function createWind(world) {
       return [x, height(x, z) + 2 + .7 * Math.sin(t * 4), z];
     };
     for (let j = 0; j < 21; j++) {
-      pts.push(...point(j / 21), ...point((j + 1) / 21));
-      phase.push(start + j / 21, start + (j + 1) / 21);
-      fade.push(Math.sin(j / 21 * Math.PI), Math.sin((j + 1) / 21 * Math.PI));
+      const a = point(j / 21), b = point((j + 1) / 21), base = pts.length / 3;
+      const length = Math.hypot(b[0] - a[0], b[2] - a[2]);
+      const dx = -(b[2] - a[2]) / length * .21, dz = (b[0] - a[0]) / length * .21;
+      for (const [p, t] of [[a, j / 21], [b, (j + 1) / 21]]) for (const side of [-1, 1]) {
+        pts.push(p[0] + dx * side, p[1], p[2] + dz * side);
+        phase.push(start + t); fade.push(Math.sin(t * Math.PI)); sides.push(side);
+      }
+      indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
     }
   }
   const geometry = new THREE.BufferGeometry();
+  geometry.setIndex(indices);
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   geometry.setAttribute('phase', new THREE.Float32BufferAttribute(phase, 1));
   geometry.setAttribute('fade', new THREE.Float32BufferAttribute(fade, 1));
+  geometry.setAttribute('side', new THREE.Float32BufferAttribute(sides, 1));
   const material = new THREE.ShaderMaterial({
-    uniforms: { clock: { value: 0 }, opacity: { value: .70 } }, transparent: true, depthWrite: false,
-    vertexShader: `attribute float phase; attribute float fade; varying float p; varying float f;
-      void main(){p=phase;f=fade;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
-    fragmentShader: `uniform float clock; uniform float opacity; varying float p; varying float f;
-      void main(){float pulse=pow(1.0-fract(p-clock*.37),3.3);gl_FragColor=vec4(.97,.98,.94,opacity*f*(.22+.78*pulse));}`,
+    uniforms: { clock: { value: 0 }, opacity: { value: .90 } }, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    vertexShader: `attribute float phase; attribute float fade; attribute float side; varying float p; varying float f; varying float edge;
+      void main(){p=phase;f=fade;edge=side;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+    fragmentShader: `uniform float clock; uniform float opacity; varying float p; varying float f; varying float edge;
+      void main(){float pulse=pow(1.0-fract(p-clock*.37),2.4);gl_FragColor=vec4(.86,.98,1.0,opacity*f*(.42+.58*pulse)*(1.0-smoothstep(.6,1.0,abs(edge))));}`,
   });
-  const wind = new THREE.LineSegments(geometry, material);
+  const wind = new THREE.Mesh(geometry, material);
   world.add(wind);
   return wind;
 }
@@ -397,24 +406,31 @@ export function createVegetation(world, uniforms) {
   const material = new THREE.ShaderMaterial({
     uniforms,
     vertexShader: `
-      attribute float burnAt;
+      attribute float burnAt; attribute vec4 heatSite; attribute float heatForest;
+      varying vec4 vHeatSite; varying float vHeatForest;
       varying vec3 vShade; varying vec3 vNormal; varying float vDepth; varying float vBurn;
       void main(){
         vShade=instanceColor;
         vNormal=normalize(mat3(instanceMatrix)*normal);
-        vBurn=burnAt;
+        vBurn=burnAt; vHeatSite=heatSite; vHeatForest=heatForest;
         vec4 mv=modelViewMatrix*instanceMatrix*vec4(position,1.0);
         vDepth=-mv.z; gl_Position=projectionMatrix*mv;
       }`,
     fragmentShader: `
       uniform float uHour, uThermal, uScar;
+      varying vec4 vHeatSite; varying float vHeatForest;
+      ${fireIntensityGLSL}
       varying vec3 vShade; varying vec3 vNormal; varying float vDepth; varying float vBurn;
       void main(){
         float light=.58+max(dot(normalize(vNormal),normalize(vec3(-.56,.72,.46))),-.18)*.60;
         float burn=step(vBurn,uHour)*uScar;
         vec3 color=mix(vShade,vec3(.205,.174,.14),burn)*light;
         color=mix(color,vec3(.60,.66,.675),smoothstep(83.0,243.0,vDepth)*.71);
-        if(uThermal>.5)color=uThermal>1.5?vec3(.10,.10,.10)*light:vec3(.06,.012,.15)*light;
+        if(uThermal>.5){
+          float heat=clamp(fireIntensity(uHour,vHeatSite.x,vHeatSite.y,999.0,vHeatSite.z,vHeatForest,vHeatSite.w),0.0,1.0);
+          color=uThermal>1.5?vec3(.10+heat*.85):mix(vec3(.06,.012,.15),vec3(.95,.18,.035),smoothstep(.05,.65,heat));
+          if(uThermal<1.5)color=mix(color,vec3(1.0,.88,.36),smoothstep(.65,1.0,heat));
+        }
         gl_FragColor=vec4(color,1.0);
       }`,
   });
@@ -430,9 +446,9 @@ export function createVegetation(world, uniforms) {
     if (nearPavedRoad(x, z) || villages.some(({ at: [cx, cz] }) => (cx - x) ** 2 + (cz - z) ** 2 < 8.5 ** 2)) continue;
     const bush = rng() < .38;
     const fire = fireAt(x, z);
-    if (fire.edge < -.1 && rng() < .63) continue;
+    if (fire.edge < -.1 && rng() < .63 * (1 - denseFuel(x, z))) continue;
     const s = (.34 + rng() ** 1.65 * 1.05) * (bush ? 1.07 : .81);
-    const tree = { x, z, h, s, rot: rng() * Math.PI * 2, tall: .65 + rng() * .7, color: rng(), burn: fire.edge < 0 ? fire.arrival : 999 };
+    const tree = { x, z, h, s, rot: rng() * Math.PI * 2, tall: .65 + rng() * .7, color: rng(), field: [fire.edge, fire.arrival, fire.rate, denseFuel(x, z)], fuel: density, burn: fire.edge < 0 ? fire.arrival : 999 };
     items[+bush].push(tree);
   }
   const matrix = new THREE.Object3D();
@@ -442,6 +458,8 @@ export function createVegetation(world, uniforms) {
     const trees = items[index];
     const mesh = new THREE.InstancedMesh(geometry, material, trees.length);
     geometry.setAttribute('burnAt', new THREE.InstancedBufferAttribute(Float32Array.from(trees.map((t) => t.burn)), 1));
+    geometry.setAttribute('heatSite', new THREE.InstancedBufferAttribute(Float32Array.from(trees.flatMap((t) => t.field)), 4));
+    geometry.setAttribute('heatForest', new THREE.InstancedBufferAttribute(Float32Array.from(trees.map((t) => t.fuel)), 1));
     trees.forEach((t, j) => {
       matrix.position.set(t.x, t.h, t.z);
       matrix.rotation.set(0, t.rot, 0);

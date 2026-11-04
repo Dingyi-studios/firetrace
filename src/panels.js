@@ -1,10 +1,10 @@
-import { clock, compass, coordinates, elapsed, events, fmt, incidentName, layers, overview, paletteLabels, resourceStatusLabels, substanceLabels, tabLabels, weather } from './data.js';
+import { clock, clamp, containment, compass, coordinates, elapsed, events, fmt, incidentName, layers, overview, paletteLabels, resourceStatusLabels, substanceLabels, tabLabels, weather } from './data.js';
 import { currentDetections, loadRemaining, resourceStatus, state, telemetry } from './state.js';
 import { icon, unitIcon } from './icons.js';
 import { place } from './objects.js';
 import { missionTarget } from './missions.js';
 import { height } from './terrain.js';
-import { airDrops, completedLine, defenses, deployments, dismountHours, dropById, onboard, personnelTotal, resourceActive, retardantTotal, waterTotal } from './operations.js';
+import { airDrops, airOperation, dropOccurrences, completedLine, defenses, deployments, dismountHours, dropById, onboard, personnelTotal, resourceActive, retardantTotal, waterTotal } from './operations.js';
 
 const live = () => `<span class="live"><i></i> ${state.playing ? '回放中' : '已暂停'}</span>`;
 const controls = (entries) => entries.map(([label, command, value, active]) =>
@@ -22,7 +22,7 @@ function resourceReadout(unit, status) {
   const heading = (Math.round(-pose.yaw * 180 / Math.PI) + 360) % 360;
   const headingText = `${String(heading).padStart(3, '0')}°`;
   let speed = unit.speed;
-  if (status === 'standby' || status === 'staged') speed = 0;
+  if (['standby', 'staged', 'taking-water', 'reloading'].includes(status)) speed = 0;
   else if (status === 'enroute') speed = deployments.find(({ truck }) => truck === unit.id).travelSpeed;
   else if (unit.kind === 'crew') speed = pose.walking ? unit.speed || 2 : 0;
   return { speed, headingText, direction: compass(heading), position: coordinates(pose.x, pose.z) };
@@ -84,11 +84,11 @@ export function dronePanel(drones) {
       [state.camera === 'overview' ? '跟随无人机' : '全局视角', 'camera', state.camera === 'overview' ? 'chase' : 'overview'],
     ])}</div>
   </section>` : `<section class="panel"><h2 class="panel-title">机队概览</h2>
-    ${stats([['在空架数', '6 / 6'], ['平均电量', Math.round(drones.reduce((total, d) => total + telemetry(d).battery, 0) / drones.length) + '%'], ['发现热点', currentDetections().length], ['最弱信号', Math.min(...drones.map((d) => telemetry(d).link)), '分贝毫瓦']])}
-    <p class="operations">${icon('drone')}<span>四架无人机跟踪活动火线，两架交错轮巡四个村落。选择无人机可查看当前目标。</span></p>
+    ${stats([['在空架数', `${drones.length} / ${drones.length}`], ['平均电量', Math.round(drones.reduce((total, d) => total + telemetry(d).battery, 0) / drones.length) + '%'], ['发现热点', currentDetections().length], ['最弱信号', Math.min(...drones.map((d) => telemetry(d).link)), '分贝毫瓦']])}
+    <p class="operations">${icon('drone')}<span>四架追踪火线，两架轮巡村落，两架持续监视密林大火，一架从高空观察整个火场。</span></p>
   </section>`;
   return `<section class="panel">
-    ${panelTitle('无人机队 <em>· 6 架在空</em>', live())}
+    ${panelTitle(`无人机队 <em>· ${drones.length} 架在空</em>`, live())}
     <div class="unit-list">${list}</div>
   </section>${info}`;
 }
@@ -124,7 +124,7 @@ export function resourcePanel(units) {
         ${stats(readouts)}
         ${r.capacity && flying ? `<div class="payload"><small>载荷 · ${r.id.startsWith('H') ? substanceLabels.water : substanceLabels.retardant}</small><b>${fmt.format(loadRemaining(r))} / ${fmt.format(r.capacity)} 加仑</b><i><i style="width:${100 * loadRemaining(r) / r.capacity}%"></i></i></div>` : ''}
         ${detail([['所属机构', r.agency], ['当前任务', drop && state.hour >= drop.start ? resourceStatusLabels[status] : r.task],
-          ...(flying ? [['投放次数', `${drop && state.hour >= drop.finish ? 1 : 0} 次（本次回放）`]] : []),
+          ...(flying ? [['投放次数', `${airOperation(r, state.hour).count} 次（本次回放）`]] : []),
           ...(r.kind === 'crew' ? [['已建防火线', `${fmt.format(completedLine(r.id, state.hour))} / ${fmt.format(r.capacity)} 链`]] : []),
           ['位置', motion.position]])}
         <div class="panel-actions grouped">${controls([
@@ -154,11 +154,11 @@ export function contextPanel() {
     </div>`;
   }
   const list = [
-    ...airDrops.filter(({ start }) => state.hour >= start).map((drop) => {
-      const done = state.hour >= drop.finish;
-      return { id: drop.id, hour: done ? drop.finish : drop.start, css: drop.substance,
+    ...airDrops.flatMap(dropOccurrences).filter(({ start }) => state.hour >= start).map((drop) => {
+      const done = state.hour >= Math.min(drop.finish, containment);
+      return { id: drop.id, hour: done ? Math.min(drop.finish, containment) : drop.start, css: drop.substance,
         text: drop.substance === 'water' ? (done ? '洒水完成' : '洒水中') : (done ? '阻燃剂投放完成' : '阻燃剂投放中'),
-        note: `${fmt.format(drop.quantity)} 加仑${drop.substance === 'water' ? ` · 累计洒水 ${fmt.format(waterTotal(state.hour))} 加仑` : ''}` };
+        note: `${fmt.format(Math.round(drop.quantity * clamp((Math.min(state.hour, containment) - drop.start) / (drop.finish - drop.start))))} 加仑${drop.substance === 'water' ? ` · 累计洒水 ${fmt.format(waterTotal(state.hour))} 加仑` : ''}` };
     }),
     ...deployments.flatMap(({ truck, crew, arrival, entry }) => {
       const line = defenses.find(({ id }) => id === crew);
@@ -195,7 +195,7 @@ export function cameraOverlay() {
     <div class="hud-tr"><b>${clock(state.hour)} 太平洋夏令时</b><span>${target.name}</span></div>
     <div class="hud-heading"><span>${(gimbal + 340) % 360}</span><span>${(gimbal + 20) % 360}</span><i></i><b>▲<br>${gimbal}°</b></div>
     <div class="crosshair"><i></i><i></i></div>
-    ${state.sensor === 'IR' && read.temp > 450 ? `<div class="hot-target"><b>热点 ${read.temp} ℃</b></div>` : ''}
+    <div id="hot-targets"></div>
     <div class="hud-gimbal"><small>云台</small><span>${pitch}° ▸</span></div>
     <div class="hud-bl"><b>高度 ${fmt.format(read.alt)} 英尺（离地）</b><b>地速 ${read.speed} 节</b><b>航向 ${heading}°</b></div>
     <div class="hud-bm"><b>目标坐标 ${coordinates(target.x, target.z)}</b><span>距离 ${fmt.format(range)} 米 · 高程 ${fmt.format(Math.round(825 + 42 * elevation))} 米 · ${read.temp} ℃</span></div>
@@ -214,5 +214,5 @@ export function followOverlay() {
       ${air && r.capacity ? `<div class="payload"><small>${r.id.startsWith('H-') ? substanceLabels.water : substanceLabels.retardant}</small><i><i style="width:${100 * loadRemaining(r) / r.capacity}%"></i></i><b>${fmt.format(loadRemaining(r))} 加仑</b></div>` : ''}
       <div class="panel-actions grouped">${controls([['追踪视角', 'camera', 'chase', state.camera === 'chase'], ...(air ? [['驾驶舱', 'camera', 'cockpit', state.camera === 'cockpit']] : [])])}</div>
       <button data-cmd="camera" data-value="overview" aria-label="退出跟随视角">${icon('close')}</button>
-    </div><small class="follow-hint">拖动环视 · 滚轮调整镜头${air ? ' · 按 C 键切换视角' : ''}</small>`;
+    </div><small class="follow-hint">拖动可上下左右环视 · 滚轮调整镜头${air ? ' · 按 C 键切换视角' : ''}</small>`;
 }

@@ -1,16 +1,20 @@
 import * as THREE from 'three';
-import { fireAt, fireIntensityGLSL, height, random } from './terrain.js';
+import { containment } from './data.js';
+import { fireAt, fireIntensityGLSL, forest, height, lakeLevel, random } from './terrain.js';
+import { denseFuel } from './combustion.js';
+import { airDrops, airOperation, dropWindowAt } from './air-operations.js';
 
 export function createFlames(world, uniforms) {
   const rng = random(2024);
-  const anchors = [], signals = [];
+  const anchors = [], signals = [], fuels = [];
   for (let z = -61; z < 40; z += .88) {
     for (let x = -35; x < 56; x += .88) {
       const px = x + rng() * .88, pz = z + rng() * .88;
-      const { edge, arrival, spot } = fireAt(px, pz);
+      const { edge, arrival, spot, rate } = fireAt(px, pz);
       if (edge > .7 && spot > 2.3) continue;
       anchors.push(px, height(px, pz) + .12, pz);
       signals.push(edge, arrival, spot, rng());
+      fuels.push(rate, forest(px, pz), denseFuel(px, pz));
     }
   }
   const geometry = new THREE.InstancedBufferGeometry();
@@ -18,12 +22,14 @@ export function createFlames(world, uniforms) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute([-.5, 0, 0, .5, 0, 0, .5, 1, 0, -.5, 1, 0], 3));
   geometry.setAttribute('anchor', new THREE.InstancedBufferAttribute(new Float32Array(anchors), 3));
   geometry.setAttribute('fireSignal', new THREE.InstancedBufferAttribute(new Float32Array(signals), 4));
+  geometry.setAttribute('fuelSignal', new THREE.InstancedBufferAttribute(new Float32Array(fuels), 3));
   geometry.instanceCount = anchors.length / 3;
   const material = new THREE.ShaderMaterial({
     uniforms, transparent: true, depthWrite: false, side: THREE.DoubleSide,
     vertexShader: `
       attribute vec3 anchor;
       attribute vec4 fireSignal;
+      attribute vec3 fuelSignal;
       uniform float uHour, uClock, uSpread;
       varying vec2 flameUv;
       varying float strength, phase, seed;
@@ -31,9 +37,10 @@ export function createFlames(world, uniforms) {
       void main(){
         phase=uClock*7.8+fireSignal.w*41.0;
         seed=fireSignal.w;
-        strength=clamp(fireIntensity(uHour,fireSignal.x,fireSignal.y,fireSignal.z),0.0,1.0)*uSpread;
+        strength=clamp(fireIntensity(uHour,fireSignal.x,fireSignal.y,fireSignal.z,fuelSignal.x,fuelSignal.y,fuelSignal.z),0.0,1.0)*uSpread;
+        if(uHour-fireSignal.y>4.0 && fuelSignal.z<.18 && fireSignal.w<.86) strength*=.10;
         flameUv=position.xy;
-        if(strength<.11){
+        if(strength<.035){
           gl_Position=vec4(2.0,2.0,2.0,1.0);
           return;
         }
@@ -69,7 +76,7 @@ export function createFlames(world, uniforms) {
   return mesh;
 }
 
-export const dropFallTime = .8;
+export const dropFallTime = .2;
 
 export function createDropParticles(drop, route) {
   const rng = random(drop.quantity);
@@ -114,20 +121,21 @@ export function createDropParticles(drop, route) {
   return {
     mesh,
     update(hour) {
-      const tail = dropFallTime + .68;
-      mesh.visible = hour >= drop.start && hour < drop.finish + tail;
+      const window = dropWindowAt(drop, hour);
+      const tail = dropFallTime + .17;
+      mesh.visible = Boolean(window && hour >= window.start && hour < Math.min(containment, window.finish) + tail);
       if (!mesh.visible) return;
-      const earliest = Math.max(drop.start, hour - tail);
-      const latest = Math.min(hour, drop.finish);
-      const density = Math.min(1, (latest - earliest) / .38);
+      const earliest = Math.max(window.start, hour - tail);
+      const latest = Math.min(hour, window.finish, containment);
+      const density = Math.min(1, (latest - earliest) / .095);
       for (let i = 0; i < count; i++) {
         const [seed, cross, along, grain] = samples[i];
         const release = earliest + seed * (latest - earliest);
         const age = hour - release;
-        const t = (release - drop.start) / (drop.finish - drop.start);
+        const t = (release - window.start) / (window.finish - window.start);
         const p = route.getPointAt(t), direction = route.getTangentAt(t);
         const fall = Math.min(1, age / dropFallTime);
-        const splash = Math.max(0, age - dropFallTime) / .68;
+        const splash = Math.max(0, age - dropFallTime) / .17;
         const spread = .10 + fall * .43 + splash * 1.38;
         const x = p.x + direction.y * cross * spread + direction.x * along * .40 * fall;
         const z = p.y - direction.x * cross * spread + direction.y * along * .40 * fall;
@@ -139,4 +147,30 @@ export function createDropParticles(drop, route) {
       for (const name of ['position', 'size', 'opacity']) geometry.attributes[name].needsUpdate = true;
     },
   };
+}
+
+export function createRefillEffects(world) {
+  const group = new THREE.Group();
+  const effects = airDrops.filter(({ substance }) => substance === 'water').map((drop) => {
+    const positions = new Float32Array(64 * 3);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mesh = new THREE.Points(geometry, new THREE.PointsMaterial({ color: '#c6f5ff', size: .22, transparent: true, opacity: .75, depthWrite: false }));
+    group.add(mesh);
+    return { drop, mesh, positions };
+  });
+  world.add(group);
+  return { group, update(hour) {
+    for (const { drop, mesh, positions } of effects) {
+      const operation = airOperation({ id: drop.id }, hour);
+      mesh.visible = operation.status === 'taking-water';
+      if (!mesh.visible) continue;
+      for (let i = 0; i < 64; i++) {
+        const angle = i * 2.4 + hour * 19, radius = .22 + (i % 8) * .09;
+        positions.set([operation.x + Math.sin(angle) * radius, lakeLevel + .10 + ((i / 64 + hour * 6) % 1) * .95,
+          operation.z + Math.cos(angle) * radius], i * 3);
+      }
+      mesh.geometry.attributes.position.needsUpdate = true;
+    }
+  } };
 }

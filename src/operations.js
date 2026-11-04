@@ -1,7 +1,10 @@
-import { clamp, dropped, hours, resources, sampleSeries } from './data.js';
+import { clamp, containment, hours, resources } from './data.js';
+import { airDispatch, airDrops, dropOccurrences, dropWindowAt, releasedTotal } from './air-operations.js';
+export { airDrops, dropById, airOperation, dropWindowAt, dropOccurrences } from './air-operations.js';
 
-export const replayRate = .84;
-export const toReplaySeconds = (hour) => hour / replayRate;
+export const animationRate = .84;
+export const replayRate = animationRate / 4;
+export const toReplaySeconds = (hour) => hour / animationRate;
 
 export const deployments = [
   { truck: 'E-31', crew: 'R-31', travelSpeed: 32, entry: 4, arrival: 10, connector: [.94, 0], road: [.21, .205], turnout: [-35, 36] },
@@ -21,24 +24,15 @@ export const defenses = [
   { id: 'R-45', start: 44, finish: 64, approach: [[-52, -37], [-40, -35], [-26, -33], [-12, -34]], path: [[-12, -34], [-3, -37], [3, -44], [13, -49], [23, -54]], chains: 180 },
 ];
 
-export const airDrops = [
-  { id: 'H-743', substance: 'water', start: 27.5, finish: 31.5, path: [[10, -10], [13, -8], [16, -5], [18, -1]], width: 1.75, altitude: 5.4 },
-  { id: 'T-131', substance: 'retardant', start: 36, finish: 42, path: [[-5, 3], [1, 0], [9, -5], [16, -10], [24, -13]], width: 2.3, altitude: 8.6 },
-  { id: 'H-531', substance: 'water', start: 49, finish: 53, path: [[18, -18], [20, -21], [23, -24], [24, -25]], width: 1.4, altitude: 5.1 },
-].map((drop) => ({ ...drop, quantity: resources.find((unit) => unit.id === drop.id).capacity }));
-
-export const dropById = new Map(airDrops.map((drop) => [drop.id, drop]));
 export const progressAt = (hour, start, finish) => clamp((hour - start) / (finish - start));
-export const dropProgress = (drop, hour) => progressAt(hour, drop.start, drop.finish);
+export const dropProgress = (drop, hour) => { const window = dropWindowAt(drop, hour); return window ? progressAt(Math.min(hour, containment), window.start, window.finish) : 0; };
 export const lineProgress = (line, hour) => progressAt(hour, line.start, line.finish);
 export const completedLine = (id, hour) => defenses.reduce((sum, line) =>
   sum + (!id || id === line.id ? Math.round(line.chains * lineProgress(line, hour)) : 0), 0);
-export const retardantTotal = (hour) => Math.round(sampleSeries(dropped, hour / hours))
-  + airDrops.reduce((sum, drop) => sum + (drop.substance === 'retardant' ? Math.round(drop.quantity * dropProgress(drop, hour)) : 0), 0);
-export const waterTotal = (hour) => airDrops.reduce((sum, drop) =>
-  sum + (drop.substance === 'water' ? Math.round(drop.quantity * dropProgress(drop, hour)) : 0), 0);
+export const retardantTotal = (hour) => Math.round(airDrops.reduce((sum, drop) => sum + (drop.substance === 'retardant' ? releasedTotal(drop, hour) : 0), 0));
+export const waterTotal = (hour) => Math.round(airDrops.reduce((sum, drop) => sum + (drop.substance === 'water' ? releasedTotal(drop, hour) : 0), 0));
 
-const unitDispatch = { 'AA-52': 10, 'WT-12': 15, 'T-910': 17, 'H-743': 21, 'T-131': 29, 'H-531': 39, 'T-162': 47 };
+const unitDispatch = { ...airDispatch, 'WT-12': 15 };
 
 export function resourceActive(unit, hour) {
   const deployment = deployments.find(({ truck, crew }) => truck === unit.id || crew === unit.id);
@@ -62,4 +56,4 @@ export function personnelTotal(hour) {
 
 export const defenseTimeline = [0, ...defenses.flatMap(({ start, finish }) => [start, finish]), hours].sort((a, b) => a - b);
 export const personnelTimeline = [...new Set([0, ...Object.values(unitDispatch), ...defenses.map(({ start }) => start - 3), ...deployments.flatMap(({ entry, arrival }) => [entry, arrival]), hours])].sort((a, b) => a - b);
-export const retardantTimeline = [...new Set([...dropped.map(([p]) => p * hours), ...airDrops.filter(({ substance }) => substance === 'retardant').flatMap(({ start, finish }) => [start, finish])])].sort((a, b) => a - b);
+export const retardantTimeline = [...new Set([0, hours, ...airDrops.filter(({ substance }) => substance === 'retardant').flatMap((drop) => dropOccurrences(drop).flatMap(({ start, finish }) => [start, finish]))])].sort((a, b) => a - b);

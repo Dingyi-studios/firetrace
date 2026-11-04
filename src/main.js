@@ -1,6 +1,6 @@
 import './styles.css';
 import { clock, clamp, compass, coordinates, drones, events, fmt, hours, incidentLocation, incidentName, paletteLabels, resources, tabLabels } from './data.js';
-import { state, tick } from './state.js';
+import { seekTo, state, tick } from './state.js';
 import { caret, icon, logo } from './icons.js';
 import { renderCharts } from './charts.js';
 import { cameraOverlay, contextPanel, dronePanel, followOverlay, incidentPanel, resourcePanel, weatherPanel } from './panels.js';
@@ -20,7 +20,7 @@ $('#app').innerHTML = `
     <div class="top-incident">${menuButton('Incident selector', incidentName, '')}</div>
     <span class="top-location">${incidentLocation}</span>
     <span class="top-date">${icon('calendar')}2024年8月14日—18日</span>
-    <nav class="workspaces" aria-label="工作区">${topButton('Incident', '事件', 'map')}${topButton('Drones', '无人机', 'drone', 6)}${topButton('Resources', '消防资源', 'truck', 6)}</nav>
+    <nav class="workspaces" aria-label="工作区">${topButton('Incident', '事件', 'map')}${topButton('Drones', '无人机', 'drone', drones.length)}${topButton('Resources', '消防资源', 'truck', 6)}</nav>
     <nav class="tools" aria-label="工具">${menuButton('View', '视图', 'calendar')}${menuButton('Analysis', '分析', 'chart')}${menuButton('Share', '分享', 'share')}</nav>
     <div class="top-settings">${menuButton('Settings', '', 'settings', '设置')}${button('collapse', '−', '', '展开或收起侧栏')}</div>
     <div id="top-menu" class="dropdown" hidden></div>
@@ -177,6 +177,7 @@ function redraw() {
 }
 
 function setHour(hour, options = {}) {
+  state.seeking = null;
   state.hour = clamp(hour, 0, hours);
   state.playing = false;
   const prior = events.findLastIndex((item) => item.time <= state.hour + .018);
@@ -202,7 +203,8 @@ function select(unit) {
   switchWorkspace(unit.kind === 'drone' ? 'Drones' : 'Resources');
   state.selected = unit;
   if (unit.kind === 'drone') {
-    if (state.feed === 'closed') state.feed = 'pip';
+    if (unit.role === 'global') state.feed = 'full';
+    else if (state.feed === 'closed') state.feed = 'pip';
     state.recordingSince = state.seconds;
   }
   state.camera = 'chase';
@@ -289,10 +291,14 @@ document.addEventListener('click', (event) => {
     }
     case 'event': {
       const index = +value;
-      setHour(events[index].time, { event: index, focus: true });
+      seekTo(events[index].time);
+      state.selectedEvent = index;
+      lastFrame = null; detailsDirty = true;
+      if (state.workspace === 'Incident') { state.camera = 'overview'; map?.reset(); }
       return;
     }
     case 'play':
+      state.seeking = null;
       if (state.hour >= hours) setHour(0);
       state.playing = true;
       lastFrame = null;
@@ -300,6 +306,7 @@ document.addEventListener('click', (event) => {
       renderTime();
       return;
     case 'pause':
+      state.seeking = null;
       state.playing = false;
       detailsDirty = true;
       renderTime();
@@ -307,7 +314,8 @@ document.addEventListener('click', (event) => {
     case 'next': {
       const index = events.findIndex((item) => item.time > state.hour + .02);
       const i = index === -1 ? 0 : index;
-      setHour(events[i].time, { event: i, focus: state.workspace === 'Incident' });
+      seekTo(events[i].time);
+      state.selectedEvent = i; lastFrame = null; detailsDirty = true;
       return;
     }
     case 'fullscreen': {
@@ -363,6 +371,7 @@ window.addEventListener('keydown', (event) => {
   }
   if (event.target.closest('button, input, select, textarea')) return;
   if (event.code === 'Space') {
+    state.seeking = null;
     event.preventDefault();
     if (!state.playing && state.hour >= hours) setHour(0);
     state.playing = !state.playing;
@@ -389,8 +398,8 @@ document.addEventListener('visibilitychange', () => {
 
 function animate(now) {
   frameId = null;
-  const wasPlaying = state.playing;
-  if (wasPlaying && lastFrame !== null && now - lastFrame < 30) {
+  const wasPlaying = state.playing || Boolean(state.seeking);
+  if ((wasPlaying || map?.ambientActive()) && lastFrame !== null && now - lastFrame < 30) {
     requestFrame();
     return;
   }
@@ -400,7 +409,6 @@ function animate(now) {
     state.selectedEvent = events.findLastIndex((event) => event.time <= state.hour);
     renderTime();
   }
-  const cameraMoving = map?.render(now);
   if (detailsDirty || (wasPlaying && (!state.playing || now - lastRefresh >= 300))) {
     lastRefresh = now;
     detailsDirty = false;
@@ -413,6 +421,7 @@ function animate(now) {
   } else if (hoverDirty) {
     renderWeather();
   }
-  if (state.playing || cameraMoving) requestFrame();
+  const cameraMoving = map?.render(now);
+  if (state.playing || state.seeking || cameraMoving) requestFrame();
 }
 redraw();

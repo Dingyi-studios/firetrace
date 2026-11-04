@@ -3,6 +3,7 @@ import { firePatrolCenter, fireTarget } from './fire-activity.js';
 import { flightLeg } from './flight-route.js';
 import { villages } from './roads.js';
 import { fireAt, height, mix, smooth } from './terrain.js';
+import { denseTarget, heatAt, hotspotsAt } from './thermal.js';
 
 const villagePoints = villages.map(({ at: [x, z] }) => ({ x, z }));
 const villageHeadings = villagePoints.map((point, index) => {
@@ -27,6 +28,8 @@ function villagePosition(unit, hour) {
 }
 
 export function missionTarget(unit, hour) {
+  if (unit.role === 'forest-west' || unit.role === 'forest-north') return denseTarget(unit.role === 'forest-west' ? 0 : 1, hour);
+  if (unit.role === 'global') return { x: 4, z: -10, name: '实时火场全景', status: '高空监视' };
   if (unit.role !== 'village') {
     const point = fireTarget(unit.role, hour);
     if (hour < events[0].time) return { ...point, name: '巡查区域', status: '巡查中' };
@@ -49,9 +52,10 @@ function patrolPosition(unit, hour) {
     const { x, z } = villagePosition(unit, hour);
     return { x, z };
   }
-  const center = firePatrolCenter(unit.role, hour);
-  const phase = hour * .18 + unit.index * 2.17;
-  const radius = 12 + unit.index * .6;
+  const specialized = unit.role.startsWith('forest') || unit.role === 'global';
+  const center = specialized ? missionTarget(unit, hour) : firePatrolCenter(unit.role, hour);
+  const phase = hour * (unit.role === 'global' ? .045 : .18) + unit.index * 2.17;
+  const radius = unit.role === 'global' ? 19 : 12 + Math.min(4, unit.index) * .6;
   return { x: center.x + Math.sin(phase) * radius, z: center.z + Math.cos(phase) * radius * .85 };
 }
 
@@ -60,13 +64,13 @@ export function dronePose(unit, hour) {
   const before = patrolPosition(unit, Math.max(0, hour - .002)), ahead = patrolPosition(unit, Math.min(hours, hour + .002));
   const yaw = Math.atan2(before.x - ahead.x, before.z - ahead.z);
   const target = missionTarget(unit, hour);
-  const y = Math.max(height(point.x, point.z), height(target.x, target.z)) + 2.8 + unit.alt / 275;
+  const y = Math.max(height(point.x, point.z), height(target.x, target.z)) + (unit.role === 'global' ? 105 : 2.8 + unit.alt / 275);
   return { ...point, y, yaw };
 }
 
 export function missionTemperature(unit, hour) {
   if (unit.role === 'village' || hour < events[0].time || hour >= containment) return 32;
   const { x, z } = missionTarget(unit, hour);
-  const { arrival } = fireAt(x, z);
-  return Math.round(220 + 760 * Math.exp(-Math.abs(hour - arrival) / 6));
+  if (unit.role === 'global') return Math.max(32, ...hotspotsAt(hour).map(({ temperature }) => temperature));
+  return heatAt(x, z, hour).temperature;
 }

@@ -3,8 +3,11 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { clamp, drones, fmt, landmarks, resources, resourceStatusLabels } from './data.js';
 import { resourceStatus, state, telemetry } from './state.js';
-import { dropById, dropProgress, lineProgress, resourceActive } from './operations.js';
-import { createFlames, dropFallTime } from './effects.js';
+import { airOperation, dropById, dropProgress, dropWindowAt, lineProgress, resourceActive } from './operations.js';
+import { createFlames, createRefillEffects, dropFallTime } from './effects.js';
+import { heatAt, hotspotsAt, localThermalCandidates } from './thermal.js';
+import { ThermalTracker, terrainVisible } from './thermal-tracker.js';
+import { windAnimating, windClockAt } from './ambient.js';
 import { missionTarget } from './missions.js';
 import { icon, unitIcon } from './icons.js';
 import { createTerrain, groundInfo, height, lakeEdge, lakeLevel, pathNodes } from './terrain.js';
@@ -45,13 +48,15 @@ export function setupMap(host, callbacks) {
   const infrastructure = createInfrastructure(world);
   const fire = createFireGraphics(world);
   const flames = createFlames(world, terrain.uniforms);
+  const refill = createRefillEffects(world);
   const wind = createWind(world);
+  const hotspotTracker = new ThermalTracker();
   const entities = createEntities(world);
   const tracks = createTracks(world);
   const persp = new THREE.PerspectiveCamera(43, 1, .09, 570);
   const plan = new THREE.OrthographicCamera(-1, 1, 1, -1, .1, 460);
   const sensor = new THREE.PerspectiveCamera(50, 1, .15, 500);
-  let w = 1, h = 1, flight = null, active = '3D', initialPlanZoom = 1, chaseAngle = 0, chaseZoom = 1;
+  let w = 1, h = 1, flight = null, active = '3D', initialPlanZoom = 1, chaseAngle = 0, chasePitch = .35, chaseZoom = 1;
   let chaseTransition = null, planFollow = null, operationsHour = null;
   persp.position.copy(overviewEye);
   const orbit = new OrbitControls(persp, renderer.domElement);
@@ -314,6 +319,7 @@ export function setupMap(host, callbacks) {
     callbacks.requestFrame();
     if (down !== null && state.view === '3D' && state.camera !== 'overview') {
       chaseAngle -= event.movementX * .005;
+      chasePitch = clamp(chasePitch + event.movementY * .006, -.25, 1.35);
       return;
     }
     const rect = host.getBoundingClientRect();
@@ -342,6 +348,7 @@ export function setupMap(host, callbacks) {
     infrastructure.detail.visible = !enabled && (isPlan || l.structures.on);
     infrastructure.boundary.visible = !enabled && l.boundary.on;
     fire.suppression.visible = !therm && l.suppression.on;
+    refill.group.visible = !therm && !isPlan;
     flames.visible = !isPlan && !therm && l.spread.on;
     fire.route.visible = !enabled && l.spread.on;
     fire.arrows.visible = !enabled && l.spread.on && !isPlan;
@@ -368,7 +375,7 @@ export function setupMap(host, callbacks) {
     u.uSpread.value = l.spread.on ? l.spread.opacity / 100 : 0;
     u.uProbability.value = l.probability.on ? l.probability.opacity / 100 : 0;
     u.uAerial.value = l.aerial.on ? l.aerial.opacity / 100 : 0;
-    wind.material.uniforms.clock.value = state.seconds;
+    wind.material.uniforms.clock.value = windClockAt(now);
     wind.material.uniforms.opacity.value = l.wind.opacity / 100;
     if (operationsHour !== state.hour) {
       operationsHour = state.hour;
@@ -381,19 +388,21 @@ export function setupMap(host, callbacks) {
       }
       for (const { drop, strip, mist } of fire.drops) {
         const progress = dropProgress(drop, state.hour - dropFallTime);
-        const age = Math.max(0, state.hour - drop.finish);
+        const window = dropWindowAt(drop, state.hour - dropFallTime);
+        const age = Math.max(0, state.hour - (window?.finish ?? state.hour));
         strip.material.opacity = .78 * (1 - clamp(age / (drop.substance === 'water' ? 9 : 72)) * (drop.substance === 'water' ? 1 : .8));
         strip.visible = progress > 0 && strip.material.opacity > 0;
         strip.geometry.setDrawRange(0, Math.floor(strip.geometry.index.count / 6 * progress) * 6);
         mist.update(state.hour);
       }
+      refill.update(state.hour);
       for (const unit of names) {
         const mesh = entities.get(unit.id);
         const p = place(unit, state.hour);
         mesh.position.set(p.x, p.y, p.z);
         mesh.rotation.y = p.yaw;
         const { blades, walkers } = mesh.userData;
-        if (blades) blades.rotation.y = state.seconds * 25;
+        if (blades) blades.rotation.y = state.seconds * 100;
         walkers?.forEach(([left, right], i) => {
           const swing = p.walking ? Math.sin(state.seconds * 11 + i * 1.4) * .46 : 0;
           left.rotation.x = swing;
@@ -433,15 +442,16 @@ export function setupMap(host, callbacks) {
       const { id, kind } = state.selected;
       const cockpit = state.camera === 'cockpit';
       const drop = dropById.get(id);
-      const dropping = drop && state.hour >= drop.start && state.hour < drop.finish + dropFallTime;
+      const dropping = drop && airOperation(state.selected, state.hour).status === 'dropping';
       const angle = rotation.y + chaseAngle + (!cockpit && dropping ? .53 : 0);
       const s = Math.sin(angle), c = Math.cos(angle);
       const distance = cockpit ? -1.62 : kind === 'air' ? 17 : kind === 'drone' ? 10 : kind === 'crew' ? 6 : 4.6;
       const rise = cockpit ? .56 : kind === 'air' ? 8 : kind === 'drone' ? 5.6 : kind === 'crew' ? 3.3 : 1.6;
       const lead = cockpit ? 22 : kind === 'air' ? 5 : kind === 'drone' ? 2.1 : 1.1;
-      const eyeX = position.x + s * distance * chaseZoom, eyeZ = position.z + c * distance * chaseZoom;
+      const horizontal = cockpit ? distance : distance * Math.cos(chasePitch);
+      const eyeX = position.x + s * horizontal * chaseZoom, eyeZ = position.z + c * horizontal * chaseZoom;
       const ground = height(eyeX, eyeZ) * lift;
-      desiredEye.set(eyeX, Math.max(ground + .65, position.y * lift + rise * chaseZoom), eyeZ);
+      desiredEye.set(eyeX, Math.max(ground + .65, position.y * lift + (cockpit ? rise : distance * Math.sin(chasePitch)) * chaseZoom), eyeZ);
       desiredCenter.set(position.x - s * lead, position.y * lift + (kind === 'drone' ? -.55 : dropping && !cockpit ? -drop.altitude * .39 : .10), position.z - c * lead);
       if (chaseTransition) {
         const t = clamp((now - chaseTransition.time) / 680);
@@ -483,6 +493,7 @@ export function setupMap(host, callbacks) {
         sensor.aspect = frame.width / frame.height;
         sensor.fov = unit.fov / state.zoom;
         sensor.updateProjectionMatrix();
+        sensor.updateMatrixWorld();
         setSensorView(true);
         renderer.setViewport(frame.left - bounds.left, bounds.bottom - frame.bottom, frame.width, frame.height);
         renderer.setScissor(frame.left - bounds.left, bounds.bottom - frame.bottom, frame.width, frame.height);
@@ -490,6 +501,7 @@ export function setupMap(host, callbacks) {
         renderer.render(scene, sensor);
         renderer.setScissorTest(false);
         setSensorView(false);
+        syncHotspots(frame.width, frame.height, now, lift);
       }
     }
 
@@ -504,7 +516,48 @@ export function setupMap(host, callbacks) {
       scale.innerHTML = `<span>0</span><span>${distance / 2}</span><span>${distance === 1000 ? '1 千米' : distance + ' 米'}</span><i></i>`;
     }
     pick(cam, lift);
-    return Boolean(!isPlan && (flight || chaseTransition));
+    return Boolean((!isPlan && (flight || chaseTransition)) || ambientActive());
+  }
+
+  function ambientActive() {
+    return windAnimating(state) || (state.feed !== 'closed' && state.sensor === 'IR' && hotspotTracker.needsFrames(performance.now()));
+  }
+
+  function syncHotspots(width, heightPx, now, lift) {
+    const container = viewfinder.querySelector('#hot-targets');
+    if (!container) return;
+    if (state.sensor !== 'IR') { hotspotTracker.reset(); container.replaceChildren(); return; }
+    const unit = state.selected;
+    const project = (point) => {
+      worldPoint.set(point.x, (height(point.x, point.z) + .18) * lift, point.z).project(sensor);
+      return { px: (worldPoint.x + 1) * width / 2, py: (1 - worldPoint.y) * heightPx / 2, depth: worldPoint.z };
+    };
+    const visible = (point) => {
+      const { px, py, depth } = project(point);
+      return depth > -1 && depth < 1 && px > 28 && px < width - 28 && py > 30 && py < heightPx - 28
+        && terrainVisible(sensor.position, { x: point.x, y: (height(point.x, point.z) + .18) * lift, z: point.z }, lift);
+    };
+    const tracks = hotspotTracker.update({ now, hour: state.hour, context: unit.id,
+      limit: unit.role === 'global' ? 4 : 2,
+      candidates: () => {
+        const points = hotspotsAt(state.hour);
+        if (!['global', 'village'].includes(unit.role)) points.push(...localThermalCandidates(missionTarget(unit, state.hour), state.hour));
+        return points;
+      }, visible, temperature: (point) => heatAt(point.x, point.z, state.hour).temperature });
+    const ids = `${unit.id}|${tracks.map(({ id }) => id).join()}`;
+    if (container.dataset.ids !== ids) {
+      container.dataset.ids = ids;
+      container.innerHTML = tracks.map(({ id, kind }) => `<div class="hot-target ${kind}" data-hotspot="${id}"><b></b></div>`).join('');
+    }
+    tracks.forEach((hotspot, i) => {
+      const element = container.children[i], pixel = project(hotspot);
+      element.style.left = `${pixel.px.toFixed(1)}px`;
+      element.style.top = `${pixel.py.toFixed(1)}px`;
+      element.style.opacity = Math.min(1, (now - hotspot.lockedAt) / 220).toFixed(2);
+      element.dataset.worldX = hotspot.x.toFixed(4);
+      element.dataset.worldZ = hotspot.z.toFixed(4);
+      element.firstElementChild.textContent = `${hotspot.name} ${Math.round(hotspot.temperature / 10) * 10} ℃`;
+    });
   }
 
   function zoomBy(factor) {
@@ -520,5 +573,5 @@ export function setupMap(host, callbacks) {
     }
   }
 
-  return { render, reset, focus, mode, zoomBy };
+  return { render, reset, focus, mode, zoomBy, ambientActive };
 }
