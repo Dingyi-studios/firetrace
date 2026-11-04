@@ -6,6 +6,7 @@ import { resourceStatus, state, telemetry } from './state.js';
 import { dropById, dropProgress, lineProgress, resourceActive } from './operations.js';
 import { createFlames, dropFallTime } from './effects.js';
 import { missionTarget } from './missions.js';
+import { icon, unitIcon } from './icons.js';
 import { createTerrain, groundInfo, height, lakeEdge, lakeLevel, pathNodes } from './terrain.js';
 import { villages } from './roads.js';
 import { createEntities, createFireGraphics, createInfrastructure, createTracks, createVegetation, createWind, place } from './objects.js';
@@ -111,7 +112,7 @@ export function setupMap(host, callbacks) {
   }
   for (const location of landmarksForResources) label(`<b>${location.mark}</b>${location.name}`, 'resource-place', location.at);
   for (const [i, node] of pathNodes.entries()) label(`<i></i><span>${node.name}${node.note ? `<small>${node.note}</small>` : ''}</span>`, i ? 'spread-point' : 'spread-point ignition', node.at);
-  for (const item of names) label(`<i></i><b>${item.id}</b><span></span>`, 'unit-tag', item.at, item);
+  for (const item of names) label(`<i></i>${icon(unitIcon(item), 'unit-symbol')}<b>${item.id}</b><span></span>`, 'unit-tag', item.at, item);
   const grid = host.querySelector('#map-grid');
   const viewfinder = host.querySelector('#sensor-picture');
   const longitude = Array.from({ length: 13 }, (_, i) => {
@@ -238,6 +239,7 @@ export function setupMap(host, callbacks) {
         p = { x: model.position.x, y: model.position.y + (isPlan ? .6 : 1.5), z: model.position.z };
         if (visible) {
           const selected = state.selected === obj;
+          element.classList.toggle('plan', isPlan);
           element.classList.toggle('selected', selected);
           element.classList.toggle('air', obj.kind === 'air');
           element.classList.toggle('ground', obj.kind === 'engine');

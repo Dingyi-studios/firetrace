@@ -1,5 +1,5 @@
 import { clamp, containment, events, hours, totalAcres } from './data.js';
-import { fireAt, mix, smooth } from './terrain.js';
+import { fireAt } from './terrain.js';
 
 const cells = [];
 for (let z = -65; z <= 45; z += .7) {
@@ -58,11 +58,47 @@ for (let hour = 0; hour <= hours; hour++) {
   }
 }
 
-export function fireTarget(role, hour) {
-  const track = tracks[role];
+// Smooth the planned focus before playback. Cubic B-splines keep velocity and
+// acceleration continuous at the hourly samples, including when seeking.
+function sampleTrack(track, hour) {
   const time = clamp(hour, 0, hours);
   const i = Math.min(hours - 1, Math.floor(time));
-  const a = track[i], b = track[i + 1];
-  const weight = smooth(0, 1, time - i);
-  return { x: mix(a.x, b.x, weight), z: mix(a.z, b.z, weight) };
+  const t = time - i, t2 = t * t, t3 = t2 * t;
+  const weights = [(1 - 3 * t + 3 * t2 - t3) / 6, (4 - 6 * t2 + 3 * t3) / 6,
+    (1 + 3 * t + 3 * t2 - 3 * t3) / 6, t3 / 6];
+  return weights.reduce((point, weight, index) => {
+    const sample = track[clamp(i + index - 1, 0, hours)];
+    point.x += sample.x * weight;
+    point.z += sample.z * weight;
+    return point;
+  }, { x: 0, z: 0 });
 }
+
+const focusTracks = Object.fromEntries(roles.map((role) => [role, tracks[role].map((_, hour) => {
+  let x = 0, z = 0, total = 0;
+  for (let offset = -4; offset <= 4; offset++) {
+    const point = tracks[role][clamp(hour + offset, 0, hours)];
+    const weight = Math.exp(-offset * offset / 8);
+    x += point.x * weight;
+    z += point.z * weight;
+    total += weight;
+  }
+  return { x: x / total, z: z / total };
+})]));
+
+export const fireTarget = (role, hour) => sampleTrack(focusTracks[role], hour);
+
+// The aircraft can keep circling while the sensor tracks a newer burning patch.
+// Bound center drift below patrol speed so target updates cannot reverse flight.
+const patrolTracks = Object.fromEntries(roles.map((role) => {
+  const track = [fireTarget(role, 0)];
+  for (let hour = 1; hour <= hours; hour++) {
+    const target = fireTarget(role, hour), previous = track.at(-1);
+    const dx = target.x - previous.x, dz = target.z - previous.z;
+    const scale = Math.min(1, 1.3 / Math.hypot(dx, dz));
+    track.push({ x: previous.x + dx * scale, z: previous.z + dz * scale });
+  }
+  return [role, track];
+}));
+
+export const firePatrolCenter = (role, hour) => sampleTrack(patrolTracks[role], hour);

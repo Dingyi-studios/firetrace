@@ -94,6 +94,9 @@ h1, h2, h3, p, dl, dd { margin: 0; }
 .unit-tag.ground > i { background: #e35c4f; box-shadow: 0 0 .36rem #e35c4f; }
 .unit-tag.crew > i { background: #d5d37a; box-shadow: 0 0 .36rem #d5d37a; }
 .unit-tag > span { opacity: .76; }
+.unit-tag .unit-symbol { display: none; }
+.unit-tag.plan > i { display: none; }
+.unit-tag.plan .unit-symbol { display: block; width: 1.12rem; height: 1.12rem; flex: none; }
 .unit-tag:hover, .unit-tag.selected { background: #a64b31ef; }
 #compass { position: absolute; left: 1.36rem; top: 2.1rem; width: 3.15rem; height: 3.15rem; border-radius: 50%; border: 1px solid #f2eddebd; background: #302d2565; box-shadow: 0 0 .65rem #211d1844; color: #fffcee; pointer-events: none; }
 #compass span { position: absolute; top: -.94rem; width: 100%; text-align: center; font-size: .73rem; text-shadow: 0 1px 1px #25241e; }

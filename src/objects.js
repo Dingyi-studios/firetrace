@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clamp, drones, resources, hours } from './data.js';
-import { airDrops, defenses, deployments, dismountHours, lineProgress, progressAt, toReplaySeconds } from './operations.js';
+import { airDrops, defenses, deployments, dismountHours, lineProgress, progressAt } from './operations.js';
 import { createDropParticles } from './effects.js';
 import { fireAt, flatPath, forest, height, lakeEdge, nearPavedRoad, noise, pathNodes, random, ribbon } from './terrain.js';
 import { dronePose } from './missions.js';
+import { aircraftPose } from './flight-paths.js';
 import { oakRoad, pavedRoads, roadCurve, roadPath, roadPoint, villages } from './roads.js';
 
 const mat = (color) => new THREE.MeshLambertMaterial({ color, flatShading: true });
@@ -155,39 +156,9 @@ function positionOn(curve, progress, lift) {
   return { x: p.x, z: p.y, y: height(p.x, p.y) + lift, yaw: Math.atan2(-d.x, -d.y) };
 }
 
-function aircraftPose(unit, hour) {
-  const [cx, cz] = unit.at;
-  const phase = toReplaySeconds(hour) * .039 + unit.index * 2.17;
-  const rx = 22, rz = 18;
-  const x = cx + Math.sin(phase) * rx;
-  const z = cz + Math.cos(phase) * rz;
-  return { x, z, y: height(x, z) + 2.4 + unit.alt / 275, yaw: Math.atan2(-Math.cos(phase) * rx, Math.sin(phase) * rz) };
-}
-
-function interpolatePose(a, b, t) {
-  const delta = Math.atan2(Math.sin(b.yaw - a.yaw), Math.cos(b.yaw - a.yaw));
-  const x = THREE.MathUtils.lerp(a.x, b.x, t), z = THREE.MathUtils.lerp(a.z, b.z, t);
-  return { x, z, y: Math.max(height(x, z) + .3, THREE.MathUtils.lerp(a.y, b.y, t)), yaw: a.yaw + delta * t };
-}
-
 export function place(unit, hour) {
   if (unit.kind === 'drone') return dronePose(unit, hour);
-  if (unit.kind === 'air') {
-    const drop = airDrops.find(({ id }) => id === unit.id);
-    const orbit = aircraftPose(unit, hour);
-    if (!drop || hour < drop.start - 4 || hour > drop.finish + 4) return orbit;
-    const route = dropRoutes.get(unit.id);
-    const progress = progressAt(hour, drop.start, drop.finish);
-    const run = positionOn(route, progress, drop.altitude);
-    if (hour >= drop.start && hour <= drop.finish) return run;
-    const entry = hour < drop.start;
-    const extra = (hour - (entry ? drop.start : drop.finish)) * 5.3;
-    run.x -= Math.sin(run.yaw) * extra;
-    run.z -= Math.cos(run.yaw) * extra;
-    run.y = Math.max(run.y, height(run.x, run.z) + 3.8);
-    const weight = entry ? progressAt(hour, drop.start - 4, drop.start) : 1 - progressAt(hour, drop.finish, drop.finish + 4);
-    return interpolatePose(orbit, run, weight * weight * (3 - 2 * weight));
-  }
+  if (unit.kind === 'air') return aircraftPose(unit, hour);
 
   const truck = truckRoutes.get(unit.id);
   if (truck) {

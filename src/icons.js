@@ -26,5 +26,7 @@ const paths = {
   chevron: '<path d="m6 9 6 6 6-6"/>',
 };
 export const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] ?? ''}</svg>`;
+export const unitIcon = (unit) => unit.kind === 'drone' ? (unit.fixedWing ? 'plane' : 'drone')
+  : unit.kind === 'air' ? (unit.id.startsWith('H-') ? 'helicopter' : 'plane') : unit.kind === 'engine' ? 'truck' : unit.id === 'DZ-4' ? 'dozer' : 'crew';
 export const caret = icon('chevron', 'caret');
 export const logo = '<svg class="firetrace-mark" viewBox="0 0 42 24" aria-hidden="true"><path fill="#6c5a3c" d="M1 21 13 7l8 9L27 3l14 18Z"/><path fill="#ba6e42" d="m9 21 9-10 5 4 4-12 14 18Z"/><path fill="#d7a27b" d="m27 3 6 8-7-3-5 7Z"/><path fill="#8f4d2c" d="m17 21 7-5 3 5Z"/></svg>';

@@ -1,6 +1,6 @@
 import { clock, compass, coordinates, elapsed, events, fmt, incidentName, layers, overview, paletteLabels, resourceStatusLabels, substanceLabels, tabLabels, weather } from './data.js';
 import { currentDetections, loadRemaining, resourceStatus, state, telemetry } from './state.js';
-import { icon } from './icons.js';
+import { icon, unitIcon } from './icons.js';
 import { place } from './objects.js';
 import { missionTarget } from './missions.js';
 import { height } from './terrain.js';
@@ -12,8 +12,6 @@ const controls = (entries) => entries.map(([label, command, value, active]) =>
 const detail = (rows) => `<dl class="details">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
 const panelTitle = (name, extra = '') => `<h2 class="panel-title">${name}<span>${extra}</span></h2>`;
 const stats = (values) => `<div class="stats">${values.map(([label, value, unit]) => `<div><small>${label}</small><strong>${value}</strong><small>${unit ?? ''}</small></div>`).join('')}</div>`;
-const unitIcon = (unit) => unit.kind === 'drone' ? (unit.fixedWing ? 'plane' : 'drone')
-  : unit.kind === 'air' ? (unit.id.startsWith('H-') ? 'helicopter' : 'plane') : unit.kind === 'engine' ? 'truck' : unit.id === 'DZ-4' ? 'dozer' : 'crew';
 const statusClass = (status) => ['final', 'dropping'].includes(status) ? 'red' : ['to-drop', 'reload', 'inbound', 'enroute', 'standby'].includes(status) ? 'amber' : 'green';
 const position = (unit) => {
   const { x, z } = place(unit, state.hour);

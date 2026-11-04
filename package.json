@@ -1,12 +1,13 @@
 {
   "name": "firetrace-workbench",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "build:vps": "vite build --base=/firetrace/",
+    "test": "node --test",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
