@@ -20,6 +20,19 @@ npm run build
 npm run preview -- --port 4173
 ```
 
+## 在线访问与部署
+
+在线地址为 [realkk.icu/firetrace/](https://realkk.icu/firetrace/)，个人主页的「探索项目」也提供入口。
+
+```bash
+npm ci
+npm run build:vps
+```
+
+将生成的 `dist/` 内容部署到网站的 `/firetrace/` 路径。该构建会为脚本、样式和图片加上正确的路径前缀。生产环境直接使用已有 HTTPS 静态服务器，无需运行 Vite、Node.js 或数据库。更新时使用独立发布目录，校验文件后切换入口链接，保留旧目录用于回退。
+
+运行时仍需要访问设备支持 WebGL 2，三维场景由访问设备的浏览器渲染。
+
 ## 操作演示
 
 1. **事件**。拖动时间轴或点击「关键事件」，观察烧毁区、立体火舌和活动火线。二维地图用深橙色标记活动火线。
