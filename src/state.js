@@ -34,6 +34,11 @@ export function loadRemaining(unit) {
   return unit.kind === 'air' ? airOperation(unit, state.hour).load : unit.capacity;
 }
 
+export function droneAltitude(drone, seconds) {
+  const phase = seconds * .31 + drone.index * 1.7;
+  return Math.round((drone.alt + Math.sin(phase) * 95) / 10) * 10;
+}
+
 export function telemetry(drone, seconds = state.seconds) {
   const t = seconds * .31 + drone.index * 1.7;
   const missionSeconds = Math.max(0, seconds - toReplaySeconds(events[0].time));
@@ -41,7 +46,7 @@ export function telemetry(drone, seconds = state.seconds) {
   const { yaw } = dronePose(drone, hour);
   const heading = (Math.round(-yaw * 180 / Math.PI) + 360) % 360;
   return {
-    alt: Math.round((drone.alt + Math.sin(t) * 95) / 10) * 10,
+    alt: droneAltitude(drone, seconds),
     speed: Math.round(drone.speed + Math.sin(t * .68) * 2),
     heading,
     battery: Math.max(5, drone.battery - Math.floor(missionSeconds / 37)),

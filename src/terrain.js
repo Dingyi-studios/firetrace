@@ -207,6 +207,15 @@ export function groundInfo(x, z, hour) {
 
 export const fireIntensityGLSL = combustionGLSL;
 
+export const thermalPaletteGLSL = `
+  vec3 thermalColor(float t, float palette){
+    if(palette>1.5) return vec3(t);
+    vec3 c=mix(vec3(.023,.007,.07),vec3(.19,.015,.38),smoothstep(0.0,.27,t));
+    c=mix(c,vec3(.64,.025,.23),smoothstep(.25,.55,t));
+    c=mix(c,vec3(.99,.43,.048),smoothstep(.48,.76,t));
+    return mix(c,vec3(1.0,1.0,.77),smoothstep(.74,1.0,t));
+  }`;
+
 export function createTerrain(scene) {
   const uniforms = {
     uHour: { value: 26 }, uClock: { value: 0 }, uPlan: { value: 0 }, uThermal: { value: 0 },
@@ -266,12 +275,7 @@ export function createTerrain(scene) {
         return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
       }
       ${fireIntensityGLSL}
-      vec3 iron(float t){
-        vec3 c=mix(vec3(.023,.007,.07),vec3(.19,.015,.38),smoothstep(0.0,.27,t));
-        c=mix(c,vec3(.64,.025,.23),smoothstep(.25,.55,t));
-        c=mix(c,vec3(.99,.43,.048),smoothstep(.48,.76,t));
-        return mix(c,vec3(1.0,1.0,.77),smoothstep(.74,1.0,t));
-      }
+      ${thermalPaletteGLSL}
       void main(){
         vec2 p=vWorld.xz;
         vec3 normal=normalize(vNormal);
@@ -323,7 +327,7 @@ export function createTerrain(scene) {
           float warmth=(.085+.107*light+.065*grain-.067*greenery)*(1.0-water*.57);
           warmth+=burnt*(.035+.04*rock)+clamp(intensity,0.0,1.0)*(.67+.10*grain)*uSpread;
           warmth=clamp(warmth,0.0,1.0);
-          surface=uThermal>1.5?vec3(warmth):iron(warmth);
+          surface=thermalColor(warmth,uThermal);
         }
         gl_FragColor=vec4(surface,1.0);
       }`,

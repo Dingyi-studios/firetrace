@@ -409,7 +409,8 @@ function animate(now) {
     state.selectedEvent = events.findLastIndex((event) => event.time <= state.hour);
     renderTime();
   }
-  if (detailsDirty || (wasPlaying && (!state.playing || now - lastRefresh >= 300))) {
+  const replayStopped = wasPlaying && !state.playing && !state.seeking;
+  if (detailsDirty || replayStopped || (wasPlaying && now - lastRefresh >= 300)) {
     lastRefresh = now;
     detailsDirty = false;
     if (state.workspace !== 'Incident' && !panelPointer && !sidebar.contains(document.activeElement)) renderSidebar();

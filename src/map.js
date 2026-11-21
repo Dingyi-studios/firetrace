@@ -45,7 +45,7 @@ export function setupMap(host, callbacks) {
   scene.add(world);
   const terrain = createTerrain(world);
   const vegetation = createVegetation(world, terrain.uniforms);
-  const infrastructure = createInfrastructure(world);
+  const infrastructure = createInfrastructure(world, terrain.uniforms.uThermal);
   const fire = createFireGraphics(world);
   const flames = createFlames(world, terrain.uniforms);
   const refill = createRefillEffects(world);
@@ -338,13 +338,15 @@ export function setupMap(host, callbacks) {
     const isPlan = !enabled && state.view === '2D';
     const l = state.layers;
     const therm = enabled && state.sensor === 'IR';
+    const villageTherm = therm && state.selected?.role === 'village';
     terrain.uniforms.uThermal.value = therm ? state.palette === 'Ironbow' ? 1 : 2 : 0;
     terrain.uniforms.uPlan.value = isPlan ? 1 : 0;
     terrain.lake.visible = !therm && !isPlan;
     vegetation.visible = !isPlan;
-    infrastructure.roads.visible = !therm;
+    infrastructure.roads.visible = !therm || villageTherm;
     infrastructure.trails.visible = !enabled && l.roads.on;
-    infrastructure.structures.visible = !therm && !isPlan;
+    infrastructure.structures.visible = (!therm || villageTherm) && !isPlan;
+    infrastructure.setStructuresThermal(villageTherm);
     infrastructure.detail.visible = !enabled && (isPlan || l.structures.on);
     infrastructure.boundary.visible = !enabled && l.boundary.on;
     fire.suppression.visible = !therm && l.suppression.on;

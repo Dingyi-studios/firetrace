@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clamp, drones, resources, hours } from './data.js';
 import { airDrops, defenses, deployments, dismountHours, lineProgress, progressAt } from './operations.js';
 import { createDropParticles } from './effects.js';
-import { fireAt, fireIntensityGLSL, flatPath, forest, height, lakeEdge, nearPavedRoad, noise, pathNodes, random, ribbon } from './terrain.js';
+import { fireAt, fireIntensityGLSL, flatPath, forest, height, lakeEdge, nearPavedRoad, noise, pathNodes, random, ribbon, thermalPaletteGLSL } from './terrain.js';
 import { dronePose } from './missions.js';
 import { aircraftPose } from './flight-paths.js';
 import { denseFuel } from './combustion.js';
@@ -215,11 +215,11 @@ function mergeRibbons(items) {
   return group;
 }
 
-function asphalt(samples, width, marked) {
+function asphalt(samples, width, marked, palette) {
   const mesh = ribbon(samples, marked ? width / .84 : width, '#33363a', 1, roadLift - (marked ? .01 : .055), 8);
   mesh.material.dispose();
   mesh.material = new THREE.ShaderMaterial({
-    uniforms: { marked: { value: marked ? 1 : 0 } },
+    uniforms: { marked: { value: marked ? 1 : 0 }, uThermal: palette },
     side: THREE.DoubleSide,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     vertexShader: `
@@ -229,8 +229,9 @@ function asphalt(samples, width, marked) {
         gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
       }`,
     fragmentShader: `
-      uniform float marked;
+      uniform float marked, uThermal;
       varying vec2 roadUv;
+      ${thermalPaletteGLSL}
       void main(){
         float grain=fract(sin(dot(floor(roadUv*vec2(120.0,68.0)),vec2(12.9898,78.233)))*43758.5453);
         float edgeDistance=min(roadUv.x,1.0-roadUv.x);
@@ -238,6 +239,12 @@ function asphalt(samples, width, marked) {
         float edge=1.0-smoothstep(.013,.013+aa,abs(edgeDistance-.12));
         float center=1.0-smoothstep(.020,.020+aa,abs(roadUv.x-.5));
         float dash=1.0-smoothstep(.52,.56,fract(roadUv.y/.97));
+        if(uThermal>.5){
+          float warmth=.322+.024*edge*marked+.012*dash*center*marked;
+          warmth+=(grain-.5)*.022*(1.0-smoothstep(.01,.06,aa));
+          gl_FragColor=vec4(thermalColor(warmth,uThermal),1.0);
+          return;
+        }
         vec3 base=vec3(.23,.245,.26)+(grain-.5)*.085*(1.0-smoothstep(.01,.06,aa));
         base=mix(base,vec3(.55,.49,.38)+(grain-.5)*.06,(1.0-smoothstep(.075,.085,edgeDistance))*marked);
         base=mix(base,vec3(.86,.86,.79),edge*marked);
@@ -248,12 +255,32 @@ function asphalt(samples, width, marked) {
   return mesh;
 }
 
-export function createInfrastructure(world) {
+function buildingThermalMaterial(palette, warmth) {
+  return new THREE.ShaderMaterial({
+    uniforms: { uThermal: palette, uWarmth: { value: warmth } },
+    vertexShader: `
+      varying vec3 vFace;
+      void main(){
+        vFace=normal;
+        gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+      }`,
+    fragmentShader: `
+      uniform float uThermal, uWarmth;
+      varying vec3 vFace;
+      ${thermalPaletteGLSL}
+      void main(){
+        float face=max(0.0,dot(normalize(vFace),normalize(vec3(-.56,.72,.46))));
+        gl_FragColor=vec4(thermalColor(uWarmth+.045*face,uThermal),1.0);
+      }`,
+  });
+}
+
+export function createInfrastructure(world, palette) {
   const highways = pavedRoads.map(({ curve, width }) => ({ width, points: curve.getSpacedPoints(Math.ceil(curve.getLength() * 5)) }));
   const pullouts = [...truckRoutes.values()].map(({ turnoutRoute }) => turnoutRoute.getSpacedPoints(22));
   const roads = new THREE.Group();
-  for (const { points, width } of highways) roads.add(asphalt(points, width, true));
-  for (const points of pullouts) roads.add(asphalt(points, .96, false));
+  for (const { points, width } of highways) roads.add(asphalt(points, width, true, palette));
+  for (const points of pullouts) roads.add(asphalt(points, .96, false, palette));
   world.add(roads);
   const trails = mergeRibbons([[[
     flatPath([[-66, 49], [-50, 35], [-32, 30], [-25, 20], [-29, 11], [-18, 2], [-11, -11]]),
@@ -266,6 +293,15 @@ export function createInfrastructure(world) {
   const rng = random(172);
   const wallMaterials = ['#e5d3b6', '#d7b895', '#c6c2ae'].map(mat);
   const roofMaterials = ['#8d4d3a', '#5d686b', '#9a7f60'].map(mat);
+  const wallThermal = buildingThermalMaterial(palette, .365);
+  const roofThermal = buildingThermalMaterial(palette, .405);
+  const glassThermal = buildingThermalMaterial(palette, .245);
+  const thermalMaterials = new Map([
+    ...wallMaterials.map((material) => [material, wallThermal]),
+    ...roofMaterials.map((material) => [material, roofThermal]),
+    [glass, glassThermal],
+  ]);
+  const buildingSurfaces = [];
   const footprintMaterial = new THREE.MeshBasicMaterial({ color: '#d5b477', side: THREE.DoubleSide });
   for (const village of villages) {
     const { curve, t, houses } = village;
@@ -287,6 +323,9 @@ export function createInfrastructure(world) {
       roof.scale.set(width * .82, 1, length * .82);
       box(house, [.17, .28, .024], glass, 0, .15, length / 2 + .018);
       box(house, [.18, .15, .024], glass, -width * .29, wallHeight * .59, length / 2 + .018);
+      for (const mesh of house.children) {
+        buildingSurfaces.push({ mesh, optical: mesh.material, thermal: thermalMaterials.get(mesh.material) });
+      }
       structures.add(house);
       const footprint = new THREE.Mesh(new THREE.PlaneGeometry(width, length), footprintMaterial);
       footprint.rotation.set(-Math.PI / 2, 0, yaw);
@@ -297,7 +336,15 @@ export function createInfrastructure(world) {
   world.add(structures, detail);
   const boundary = mergeRibbons([[[flatPath([[-75, 55], [-38, 52], [-4, 48], [52, 42], [79, 16], [79, -35], [51, -62], [11, -66], [-34, -59], [-67, -40], [-75, 55]], 380)], .13, '#5c699a', .9, .38]]);
   world.add(boundary);
-  return { roads, trails, structures, detail, boundary };
+  let thermalStructures = false;
+  function setStructuresThermal(enabled) {
+    if (thermalStructures === enabled) return;
+    thermalStructures = enabled;
+    for (const { mesh, optical, thermal } of buildingSurfaces) {
+      mesh.material = enabled ? thermal : optical;
+    }
+  }
+  return { roads, trails, structures, detail, boundary, setStructuresThermal };
 }
 
 export function createFireGraphics(world) {

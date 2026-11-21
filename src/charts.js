@@ -1,6 +1,6 @@
 import { fmt, hours, profile, sampleSeries } from './data.js';
 import { area, spread } from './fire-activity.js';
-import { state, telemetry } from './state.js';
+import { droneAltitude, state, telemetry } from './state.js';
 import { completedLine, defenseTimeline, personnelTimeline, personnelTotal, retardantTimeline, retardantTotal } from './operations.js';
 import { icon } from './icons.js';
 
@@ -67,15 +67,21 @@ export function renderCharts(drones) {
     ];
   } else {
     const drone = state.selected ?? drones[0];
-    const reading = telemetry(drone);
-    const trend = (unit, field) => Array.from({ length: 31 }, (_, i) => {
-      const t = state.seconds - 60 + i * 2;
-      return [i / 30, telemetry(unit, t)[field]];
-    }).filter(([p]) => state.seconds - 60 + 60 * p >= 0 || p === 1);
+    const samples = [];
+    for (let i = 0; i <= 30; i++) {
+      const seconds = state.seconds - (30 - i) * 2;
+      if (seconds >= 0) samples.push({ x: i / 30, seconds, reading: telemetry(drone, seconds) });
+    }
+    const reading = samples.at(-1).reading;
+    const trend = (field) => samples.map(({ x, reading }) => [x, reading[field]]);
+    const altitudes = trend('alt');
+    const others = drones.filter((unit) => unit !== drone).map((unit) =>
+      samples.map(({ x, seconds }) => [x, droneAltitude(unit, seconds)]));
+    const highest = Math.max(...[altitudes, ...others].flat().map(([, altitude]) => altitude));
     list = [
-      { title: '离地高度（英尺）', points: trend(drone, 'alt'), max: 2400, color: '#b85543', value: `${drone.id} · ${fmt.format(reading.alt)} 英尺`, extras: drones.filter((d) => d !== drone).map((d) => trend(d, 'alt')) },
-      { title: '画面最高温度（℃）', points: trend(drone, 'temp'), max: 1000, color: '#ae4437', value: `${reading.temp} ℃` },
-      { title: '电量（%）', points: trend(drone, 'battery'), max: 100, color: '#a75a45', value: `${drone.id} · ${reading.battery}%` },
+      { title: '离地高度（英尺）', points: altitudes, max: Math.ceil(highest / 1000) * 1000, color: '#b85543', value: `${drone.id} · ${fmt.format(reading.alt)} 英尺`, extras: others },
+      { title: '画面最高温度（℃）', points: trend('temp'), max: 1200, color: '#ae4437', value: `${reading.temp} ℃` },
+      { title: '电量（%）', points: trend('battery'), max: 100, color: '#a75a45', value: `${drone.id} · ${reading.battery}%` },
     ].map((item) => ({ ...item, live: true }));
   }
   return list.map((item, index) => chart({ ...item, index })).join('');
